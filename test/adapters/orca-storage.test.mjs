@@ -51,6 +51,12 @@ test('createWorktree adds --agent and --prompt only when an agent is chosen; the
   assert.deepEqual(out, { worktreeId: 'wt-2', path: '/w/2' });
 });
 
+test('createWorktree falls back to launch.worktreeId when the agent path omits the worktree', async () => {
+  const cli = fakeCli({ 'worktree create': { lineage: {}, launch: { worktreeId: 'wt-3' } } });
+  const out = await adapter(cli).createWorktree({ repoId: 'r1', name: 'bc-3', comment: 'c', agent: 'claude', prompt: 'p' });
+  assert.deepEqual(out, { worktreeId: 'wt-3', path: undefined });
+});
+
 test('createWorktree tolerates a result without id or path', async () => {
   const cli = fakeCli({ 'worktree create': {} });
   assert.deepEqual(await adapter(cli).createWorktree({ repoId: 'r1', name: 'n', comment: 'c' }), {

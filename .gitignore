@@ -1,0 +1,9 @@
+# Local AI runtime state
+.atl/
+node_modules/
+*.log
+.DS_Store
+
+# Local SDD and memory tooling
+.engram/
+openspec/

@@ -1,0 +1,52 @@
+# Tests every push and PR. On main, when orca-plugin.json carries a version
+# without a tag, creates the vX.Y.Z tag and its GitHub release.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+      - name: Check version consistency
+        run: |
+          node -e '
+            const fs = require("fs");
+            const read = (f) => JSON.parse(fs.readFileSync(f, "utf8"));
+            const v = read("orca-plugin.json").version;
+            if (read("package.json").version !== v) {
+              console.error(`package.json version is not ${v}`);
+              process.exit(1);
+            }
+          '
+
+  release:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create tag and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v$(node -p 'require("./orca-plugin.json").version')"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            echo "$tag already exists, nothing to release"
+            exit 0
+          fi
+          gh release create "$tag" --target "$GITHUB_SHA" --title "$tag" --generate-notes

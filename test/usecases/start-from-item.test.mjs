@@ -4,17 +4,32 @@ import { createStartFromItem } from '../../src/usecases/start-from-item.mjs';
 
 const APP_URL = 'https://app.basecamp.com/999/buckets/7/todos/1';
 const ITEM = {
-  type: 'todo', id: 1, projectId: 7, projectName: 'P', title: 'Fix: Login Bug', description: 'Steps "here" & more', appUrl: APP_URL
+  type: 'todo', id: 1, projectId: 7, projectName: 'P', title: 'Fix: Login Bug', description: 'Steps "here" & more', appUrl: APP_URL, state: 'open'
 };
 const REQUEST = { type: 'todo', id: 1, projectId: 7, repoId: 'r1', agent: 'claude' };
 
-function setup({ item = ITEM, created = { worktreeId: 'wt-1', path: '/w/1' }, found = null, getError, createError, setError } = {}) {
-  const log = { get: [], create: [], find: [], notices: [] };
+const SYNC_OFF = { enabled: false, conflictRule: 'orca-wins', statusToColumn: {} };
+const SYNC_ON = { enabled: true, conflictRule: 'orca-wins', statusToColumn: {} };
+
+function setup({
+  item = ITEM,
+  created = { worktreeId: 'wt-1', path: '/w/1' },
+  found = null,
+  getError,
+  createError,
+  setError,
+  syncConfig = SYNC_OFF,
+  setStatusError,
+  advance = {}
+} = {}) {
+  const log = { get: [], create: [], find: [], notices: [], statusSets: [] };
   const store = new Map();
+  const time = { now: 1700000000000 };
   const deps = {
     source: {
       get: async (q) => {
         log.get.push(q);
+        time.now += advance.get ?? 0;
         if (getError) throw getError;
         return item;
       }
@@ -22,8 +37,13 @@ function setup({ item = ITEM, created = { worktreeId: 'wt-1', path: '/w/1' }, fo
     orca: {
       createWorktree: async (a) => {
         log.create.push(a);
+        time.now += advance.create ?? 0;
         if (createError) throw createError;
         return created;
+      },
+      setStatus: async (id, status, options) => {
+        log.statusSets.push([id, status, options]);
+        if (setStatusError) throw setStatusError;
       },
       findWorktree: async (a) => {
         log.find.push(a);
@@ -37,7 +57,8 @@ function setup({ item = ITEM, created = { worktreeId: 'wt-1', path: '/w/1' }, fo
       }
     },
     notify: async (title, body) => void log.notices.push({ title, body }),
-    clock: { now: () => 1700000000000 }
+    loadSyncConfig: async () => syncConfig,
+    clock: { now: () => time.now }
   };
   return { deps, log, store, start: createStartFromItem(deps) };
 }
@@ -148,4 +169,80 @@ test('the in-flight guard is released after a failure', async () => {
   const start = createStartFromItem(deps);
   assert.equal((await start(REQUEST)).status, 'failed');
   assert.equal((await start(REQUEST)).status, 'failed');
+});
+
+// ---- initial status (status sync) -------------------------------------------
+
+const CREATED_AT = 1700000000000;
+
+test('sync on: an open to-do is set to in-progress after create and the baseline is stored', async () => {
+  const { start, log, store } = setup({ syncConfig: SYNC_ON });
+  const result = await start(REQUEST);
+  assert.deepEqual(log.statusSets, [['wt-1', 'in-progress', { timeoutMs: 10_000 }]]);
+  assert.deepEqual(store.get('link:wt-1'), {
+    v: 2, type: 'todo', id: 1, projectId: 7, appUrl: APP_URL, title: 'Fix: Login Bug', createdAt: CREATED_AT,
+    sync: { orca: 'in-progress', bc: 'open', at: CREATED_AT, lastOpenOrca: 'in-progress' }
+  });
+  assert.equal(result.status, 'linked');
+});
+
+test('sync on: a completed to-do is set to completed', async () => {
+  const { start, log, store } = setup({ syncConfig: SYNC_ON, item: { ...ITEM, state: 'completed' } });
+  await start(REQUEST);
+  assert.deepEqual(log.statusSets.map((c) => c.slice(0, 2)), [['wt-1', 'completed']]);
+  assert.deepEqual(store.get('link:wt-1').sync, { orca: 'completed', bc: 'completed', at: CREATED_AT });
+});
+
+test('sync off: no worktree set and no baseline', async () => {
+  const { start, log, store } = setup({ syncConfig: SYNC_OFF });
+  await start(REQUEST);
+  assert.deepEqual(log.statusSets, []);
+  assert.equal(store.get('link:wt-1').v, 1);
+  assert.equal('sync' in store.get('link:wt-1'), false);
+});
+
+test('a failing set notifies, stores the link without a baseline and still resolves linked', async () => {
+  const { start, log, store } = setup({ syncConfig: SYNC_ON, setStatusError: new Error('orca timed out') });
+  const result = await start(REQUEST);
+  assert.equal(result.status, 'linked');
+  assert.equal('sync' in store.get('link:wt-1'), false);
+  assert.equal(log.notices.length, 2);
+  assert.ok(log.notices.some((n) => /orca timed out/.test(n.body)));
+});
+
+test('the set gets min(10 s, 28 s - elapsed): 3 s left after 25 s of get and create', async () => {
+  const { start, log } = setup({ syncConfig: SYNC_ON, advance: { get: 15_000, create: 10_000 } });
+  await start(REQUEST);
+  assert.deepEqual(log.statusSets, [['wt-1', 'in-progress', { timeoutMs: 3_000 }]]);
+});
+
+test('the set is skipped with a notice and no baseline when less than 2 s remain', async () => {
+  const { start, log, store } = setup({ syncConfig: SYNC_ON, advance: { get: 15_000, create: 12_000 } });
+  const result = await start(REQUEST);
+  assert.deepEqual(log.statusSets, []);
+  assert.equal(result.status, 'linked');
+  assert.equal('sync' in store.get('link:wt-1'), false);
+  assert.equal(log.notices.length, 2);
+});
+
+test('card: the first status mapped to its column is set, and a Done card is completed', async () => {
+  const map = { 7: { todo: '8', 'in-review': '9', 'also-review': '9' } };
+  const config = { ...SYNC_ON, statusToColumn: map };
+  const mapped = setup({ syncConfig: config, item: { ...ITEM, type: 'card', state: '9' } });
+  await mapped.start({ ...REQUEST, type: 'card' });
+  assert.deepEqual(mapped.log.statusSets.map((c) => c.slice(0, 2)), [['wt-1', 'in-review']]);
+  assert.deepEqual(mapped.store.get('link:wt-1').sync, { orca: 'in-review', bc: '9', at: CREATED_AT, lastOpenOrca: 'in-review' });
+
+  const done = setup({ syncConfig: config, item: { ...ITEM, type: 'card', state: 'completed' } });
+  await done.start({ ...REQUEST, type: 'card' });
+  assert.deepEqual(done.log.statusSets.map((c) => c.slice(0, 2)), [['wt-1', 'completed']]);
+});
+
+test('card in an unmapped column: no set, no baseline', async () => {
+  const config = { ...SYNC_ON, statusToColumn: { 7: { todo: '8' } } };
+  const { start, log, store } = setup({ syncConfig: config, item: { ...ITEM, type: 'card', state: '5' } });
+  const result = await start({ ...REQUEST, type: 'card' });
+  assert.deepEqual(log.statusSets, []);
+  assert.equal('sync' in store.get('link:wt-1'), false);
+  assert.equal(result.status, 'linked');
 });

@@ -4,14 +4,22 @@ import { createOrcaAdapter } from './src/adapters/orca.mjs';
 import { createStorage } from './src/adapters/storage.mjs';
 import { configFilePath, loadConfig } from './src/config.mjs';
 import { openPicker } from './src/inbound/open-picker.mjs';
+import { createPoller } from './src/inbound/poller.mjs';
 import { createUiServer } from './src/inbound/ui-server.mjs';
 import { createCompleteLinked } from './src/usecases/complete-linked.mjs';
 import { diagnose } from './src/usecases/diagnose.mjs';
 import { createOnRemoved } from './src/usecases/on-removed.mjs';
 import { createOpenLinked } from './src/usecases/open-linked.mjs';
 import { createStartFromItem } from './src/usecases/start-from-item.mjs';
+import { createSyncConfig } from './src/usecases/sync-config.mjs';
+import { createSyncLinks } from './src/usecases/sync-links.mjs';
 import { orcaCli } from './orca-cli.mjs';
 import { fs, openExternal, spawner } from './ports.mjs';
+
+const SYNC_NOW_WAIT_MS = 20_000;
+
+// The running plugin instance, so the module-level `deactivate` can stop what `activate` started.
+let running = null;
 
 const defaultDeps = {
   fs,
@@ -21,6 +29,7 @@ const defaultDeps = {
   env: process.env,
   configFile: configFilePath(),
   clock: { now: () => Date.now() },
+  timers: { setInterval, clearInterval, setTimeout, clearTimeout },
   createServer: ({ source, orca, startFromItem }) =>
     createUiServer({
       source,
@@ -31,6 +40,7 @@ const defaultDeps = {
 };
 
 export default function activate(orca, overrides = {}) {
+  deactivate();
   const deps = { ...defaultDeps, ...overrides };
   const log = (message) => orca.log(`basecamp-worktree-link: ${message}`);
   const notify = (title, body) =>
@@ -52,11 +62,24 @@ export default function activate(orca, overrides = {}) {
     list: (query) => withSource((s) => s.list(query)),
     projects: () => withSource((s) => s.projects()),
     get: (item) => withSource((s) => s.get(item)),
-    complete: (item) => withSource((s) => s.complete(item))
+    complete: (item) => withSource((s) => s.complete(item)),
+    state: (item) => withSource((s) => s.state(item)),
+    reopen: (item) => withSource((s) => s.reopen(item)),
+    columns: (query) => withSource((s) => s.columns(query)),
+    move: (item) => withSource((s) => s.move(item))
   };
 
-  const startFromItem = createStartFromItem({ source, orca: orcaPort, storage, notify, clock: deps.clock });
-  const completeLinked = createCompleteLinked({ orca: orcaPort, storage, source, notify });
+  const syncConfig = createSyncConfig({ storage });
+  const loadSyncConfig = () => syncConfig.get();
+  const startFromItem = createStartFromItem({ source, orca: orcaPort, storage, notify, clock: deps.clock, loadSyncConfig });
+  const completeLinked = createCompleteLinked({ orca: orcaPort, storage, source, notify, loadSyncConfig, clock: deps.clock });
+  const syncLinks = createSyncLinks({ storage, source, orca: orcaPort, notify, clock: deps.clock });
+  const poller = createPoller({
+    tick: () => syncLinks.tick(),
+    onNotice: notify,
+    timers: deps.timers,
+    clock: deps.clock
+  });
   const openLinked = createOpenLinked({ orca: orcaPort, storage, openExternal: deps.openExternal, notify });
   const onRemoved = createOnRemoved({ storage, source, notify });
 
@@ -102,6 +125,23 @@ export default function activate(orca, overrides = {}) {
   orca.commands.register('open-item', guard('open-item', openLinked));
   orca.commands.register('complete', guard('complete', completeLinked));
 
+  // Runs exactly one tick and waits for it (at most 20 s). The tick notifies conflicts and failures itself.
+  orca.commands.register(
+    'sync-now',
+    guard('sync-now', async () => {
+      let timer;
+      const giveUp = new Promise((resolve) => {
+        timer = deps.timers.setTimeout(resolve, SYNC_NOW_WAIT_MS);
+        timer.unref?.();
+      });
+      try {
+        await Promise.race([poller.runNow(), giveUp]);
+      } finally {
+        deps.timers.clearTimeout(timer);
+      }
+    })
+  );
+
   orca.events.on('worktree.removed', async (event) => {
     try {
       await onRemoved(event);
@@ -109,4 +149,27 @@ export default function activate(orca, overrides = {}) {
       log(`worktree.removed failed: ${error.message}`);
     }
   });
+  // O(1) and synchronous: Orca can emit this event often, and it only (re)starts the poller after a restart.
+  orca.events.on('agent.status.changed', () => {
+    try {
+      poller.ensureStarted();
+    } catch (error) {
+      log(`agent.status.changed failed: ${error.message}`);
+    }
+  });
+
+  poller.ensureStarted();
+  running = {
+    stop: () => {
+      poller.stop();
+      void server?.stop().catch(() => {});
+    }
+  };
+}
+
+/** Stops the poller and the picker server of the running instance. Safe to call more than once. */
+export function deactivate() {
+  const current = running;
+  running = null;
+  current?.stop();
 }

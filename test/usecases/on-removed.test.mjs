@@ -7,11 +7,12 @@ const APP_URL = 'https://app.basecamp.com/999/buckets/7/todos/1';
 const LINK = { v: 1, type: 'todo', id: 1, projectId: 7, appUrl: APP_URL, title: 'Fix login', createdAt: 1 };
 
 function setup({ links = { 'link:wt-1': LINK }, complete, getError, deleteError, notifyError } = {}) {
-  const log = { completes: [], notices: [], deletes: [] };
+  const log = { completes: [], notices: [], deletes: [], reads: [] };
   const store = new Map(Object.entries(links));
   const deps = {
     storage: {
       get: async (k) => {
+        log.reads.push(k);
         if (getError) throw getError;
         return store.get(k) ?? null;
       },
@@ -42,6 +43,33 @@ test('a linked removal completes the item once and deletes the link', async () =
   assert.deepEqual(log.completes, [{ type: 'todo', id: 1, projectId: 7 }]);
   assert.equal(store.has('link:wt-1'), false);
   assert.equal(log.notices.length, 1);
+});
+
+test('removal with sync disabled still completes the item once and deletes the link, ignoring the sync config', async () => {
+  const synced = { ...LINK, v: 2, sync: { orca: 'in-progress', bc: 'open', at: 5 } };
+  const { handle, log, store } = setup({
+    links: { 'link:wt-1': synced, 'sync:config': { enabled: false, conflictRule: 'orca-wins', statusToColumn: {} } }
+  });
+  await handle({ worktreeId: 'wt-1', path: '/w/1' });
+  assert.deepEqual(log.completes, [{ type: 'todo', id: 1, projectId: 7 }]);
+  assert.deepEqual(log.reads, ['link:wt-1']);
+  assert.equal(store.has('link:wt-1'), false);
+  assert.equal(log.notices.length, 1);
+});
+
+test('a removed link stays removed when a sync pass runs afterwards', async () => {
+  const { createSyncLinks } = await import('../../src/usecases/sync-links.mjs');
+  const { deps, store, handle } = setup();
+  await handle({ worktreeId: 'wt-1' });
+  const sync = createSyncLinks({
+    storage: { ...deps.storage, keys: async () => [...store.keys()], set: async (k, v) => void store.set(k, v) },
+    source: { state: async () => 'completed' },
+    orca: { listWorktreeStatuses: async () => ({ statuses: new Map([['wt-1', 'in-progress']]), truncated: false }) },
+    notify: deps.notify,
+    clock: { now: () => 1 }
+  });
+  await sync.tick();
+  assert.equal(store.has('link:wt-1'), false);
 });
 
 test('an unlinked removal does nothing: no spawn, no notice, no delete', async () => {

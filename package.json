@@ -1,6 +1,6 @@
 {
   "name": "orca-basecamp",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Orca plugin that links Basecamp to-dos and cards to worktrees, using only the basecamp CLI.",
   "type": "module",
   "license": "Apache-2.0",

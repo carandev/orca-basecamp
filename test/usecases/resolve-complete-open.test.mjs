@@ -8,8 +8,20 @@ const APP_URL = 'https://app.basecamp.com/999/buckets/7/todos/1';
 const LINK = { v: 1, type: 'todo', id: 1, projectId: 7, appUrl: APP_URL, title: 'Fix login', createdAt: 1 };
 
 /** Recording fakes. `active` is the resolved worktree (or null); `links` seeds storage. */
-function setup({ active = { worktreeId: 'wt-1', worktreePath: '/w/1' }, links = { 'link:wt-1': LINK }, resolveError, complete, tabError, browserError } = {}) {
-  const log = { notices: [], completes: [], tabs: [], browser: [], resolves: 0 };
+const SYNC_ON = { enabled: true, conflictRule: 'orca-wins', statusToColumn: {} };
+const SYNC_OFF = { ...SYNC_ON, enabled: false };
+
+function setup({
+  active = { worktreeId: 'wt-1', worktreePath: '/w/1' },
+  links = { 'link:wt-1': LINK },
+  resolveError,
+  complete,
+  tabError,
+  browserError,
+  syncConfig = SYNC_ON,
+  setStatusError
+} = {}) {
+  const log = { notices: [], completes: [], tabs: [], browser: [], resolves: 0, statusSets: [], order: [] };
   const store = new Map(Object.entries(links));
   const deps = {
     orca: {
@@ -21,9 +33,23 @@ function setup({ active = { worktreeId: 'wt-1', worktreePath: '/w/1' }, links = 
       openTab: async (a) => {
         log.tabs.push(a);
         if (tabError) throw tabError;
+      },
+      setStatus: async (id, status) => {
+        log.order.push('setStatus');
+        log.statusSets.push([id, status]);
+        if (setStatusError) throw setStatusError;
       }
     },
-    storage: { get: async (k) => store.get(k) ?? null, delete: async (k) => void store.delete(k) },
+    storage: {
+      get: async (k) => store.get(k) ?? null,
+      set: async (k, v) => {
+        log.order.push('storage.set');
+        store.set(k, v);
+      },
+      delete: async (k) => void store.delete(k)
+    },
+    loadSyncConfig: async () => syncConfig,
+    clock: { now: () => 1700000000000 },
     source: {
       complete: async (q) => {
         log.completes.push(q);
@@ -72,19 +98,74 @@ test('Complete with no link notifies "no linked item" and makes no call', async 
   assert.match(log.notices[0].body, /no linked item/i);
 });
 
-test('Complete spawns once with the link scope and removes the link on success', async () => {
+test('Complete spawns once with the link scope and KEEPS the link, now with a completed baseline', async () => {
   const { deps, log, store } = setup();
   const result = await createCompleteLinked(deps)();
   assert.deepEqual(log.completes, [{ type: 'todo', id: 1, projectId: 7 }]);
   assert.equal(result.status, 'completed');
+  assert.deepEqual(store.get('link:wt-1'), { ...LINK, v: 2, sync: { orca: 'completed', bc: 'completed', at: 1700000000000 } });
+});
+
+test('Complete with sync on sets the Orca status to completed before storing the baseline', async () => {
+  const { deps, log } = setup({ syncConfig: SYNC_ON });
+  await createCompleteLinked(deps)();
+  assert.deepEqual(log.statusSets, [['wt-1', 'completed']]);
+  assert.deepEqual(log.order, ['setStatus', 'storage.set']);
+});
+
+test('Complete with sync off skips only the Orca set and still writes the baseline', async () => {
+  const { deps, log, store } = setup({ syncConfig: SYNC_OFF });
+  await createCompleteLinked(deps)();
+  assert.deepEqual(log.statusSets, []);
+  assert.deepEqual(store.get('link:wt-1').sync, { orca: 'completed', bc: 'completed', at: 1700000000000 });
+});
+
+test('Complete carries lastOpenOrca from the previous baseline', async () => {
+  const link = { ...LINK, v: 2, sync: { orca: 'in-review', bc: 'open', at: 5, lastOpenOrca: 'in-review' } };
+  const { deps, store } = setup({ links: { 'link:wt-1': link } });
+  await createCompleteLinked(deps)();
+  assert.deepEqual(store.get('link:wt-1').sync, { orca: 'completed', bc: 'completed', at: 1700000000000, lastOpenOrca: 'in-review' });
+});
+
+test('Complete already-completed also writes the baseline', async () => {
+  const { deps, store } = setup({ complete: { status: 'already' } });
+  const result = await createCompleteLinked(deps)();
+  assert.equal(result.status, 'already');
+  assert.equal(store.get('link:wt-1').sync.bc, 'completed');
+});
+
+test('Complete: a failing Orca set writes no baseline but still reports the completion', async () => {
+  const { deps, log, store } = setup({ setStatusError: new Error('orca down') });
+  const result = await createCompleteLinked(deps)();
+  assert.equal(result.status, 'completed');
+  assert.deepEqual(store.get('link:wt-1'), LINK);
+  assert.match(log.notices.map((n) => n.body).join(' '), /orca down/);
+});
+
+test('Complete: inaccessible writes no baseline and never touches Orca', async () => {
+  const { deps, log, store } = setup({ complete: { status: 'inaccessible' } });
+  await createCompleteLinked(deps)();
+  assert.deepEqual(log.statusSets, []);
+  assert.deepEqual(store.get('link:wt-1'), LINK);
+});
+
+test('Complete does not recreate a link that vanished before the baseline write', async () => {
+  const { deps, store } = setup({
+    complete: () => {
+      store.delete('link:wt-1');
+      return { status: 'completed' };
+    }
+  });
+  await createCompleteLinked(deps)();
   assert.equal(store.has('link:wt-1'), false);
 });
 
 test('Complete works for cards too', async () => {
   const card = { ...LINK, type: 'card', id: 55 };
-  const { deps, log } = setup({ links: { 'link:wt-1': card } });
+  const { deps, log, store } = setup({ links: { 'link:wt-1': card } });
   await createCompleteLinked(deps)();
   assert.deepEqual(log.completes, [{ type: 'card', id: 55, projectId: 7 }]);
+  assert.equal(store.get('link:wt-1').sync.bc, 'completed');
 });
 
 test('Complete failure keeps the link, notifies message and hint, spawns exactly once even when retryable', async () => {

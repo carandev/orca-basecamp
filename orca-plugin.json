@@ -3,7 +3,7 @@
   "id": "basecamp-worktree-link",
   "publisher": "carandev",
   "name": "Basecamp Worktree Link",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Creates an Orca worktree from a Basecamp to-do or card, and completes the item when the worktree is removed. Uses only the basecamp CLI.",
   "engines": {
     "orca": ">=1.4.0"
@@ -14,6 +14,9 @@
     "events": [
       {
         "on": "worktree.removed"
+      },
+      {
+        "on": "agent.status.changed"
       }
     ],
     "commands": [
@@ -35,6 +38,11 @@
       {
         "id": "complete",
         "title": "Basecamp: Complete linked item",
+        "context": "global"
+      },
+      {
+        "id": "sync-now",
+        "title": "Basecamp: Sync now",
         "context": "global"
       }
     ]

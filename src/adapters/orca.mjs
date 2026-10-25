@@ -1,3 +1,9 @@
+const LIST_LIMIT = 1000;
+const LIST_TIMEOUT_MS = 20_000;
+const SET_TIMEOUT_MS = 10_000;
+const STATUS_PATTERN = /^[A-Za-z0-9][\w.-]{0,39}$/;
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
+
 const stripRef = (branch) => (typeof branch === 'string' ? branch.replace(/^refs\/heads\//, '') : '');
 
 /**
@@ -37,6 +43,27 @@ export function createOrcaAdapter({ orcaCli, readContext }) {
       const byPath = path === undefined ? [] : worktrees.filter((w) => w.path === path);
       const matches = byPath.length > 0 ? byPath : worktrees.filter((w) => w.displayName === name);
       return matches.length === 1 ? matches[0].id : null;
+    },
+
+    /**
+     * One `worktree list` for the whole tick. Resolves to `{statuses: Map<worktreeId, workspaceStatus>, truncated}`;
+     * rows without a string `workspaceStatus` are omitted.
+     */
+    async listWorktreeStatuses({ limit = LIST_LIMIT } = {}) {
+      const result = (await orcaCli(['worktree', 'list', '--limit', String(limit)], { timeoutMs: LIST_TIMEOUT_MS })) ?? {};
+      const rows = Array.isArray(result.worktrees) ? result.worktrees : [];
+      const statuses = new Map();
+      for (const row of rows) {
+        if (typeof row?.id === 'string' && row.id && typeof row.workspaceStatus === 'string') statuses.set(row.id, row.workspaceStatus);
+      }
+      return { statuses, truncated: result.truncated === true || result.totalCount > rows.length };
+    },
+
+    /** Sets the Orca workspace status. Both values are validated before anything is spawned. */
+    async setStatus(worktreeId, status, { timeoutMs = SET_TIMEOUT_MS } = {}) {
+      if (typeof worktreeId !== 'string' || !worktreeId || CONTROL_CHARS.test(worktreeId)) throw new Error('Invalid worktree id');
+      if (typeof status !== 'string' || !STATUS_PATTERN.test(status)) throw new Error(`Invalid workspace status "${status}"`);
+      await orcaCli(['worktree', 'set', '--worktree', `id:${worktreeId}`, '--workspace-status', status], { timeoutMs });
     },
 
     async openTab({ worktreeId, url }) {

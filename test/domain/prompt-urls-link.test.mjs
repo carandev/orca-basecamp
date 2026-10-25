@@ -57,7 +57,7 @@ test('link has the v1 shape and round-trips', () => {
 
 test('parseLink rejects malformed or foreign values', () => {
   assert.equal(parseLink(null), null);
-  assert.equal(parseLink({ v: 2, type: 'todo', id: 1, projectId: 7 }), null);
+  assert.equal(parseLink({ v: 3, type: 'todo', id: 1, projectId: 7 }), null);
   assert.equal(parseLink({ v: 1, type: 'doc', id: 1, projectId: 7 }), null);
   assert.equal(parseLink({ v: 1, type: 'card', id: 'x', projectId: 7 }), null);
 });

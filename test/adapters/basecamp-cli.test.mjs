@@ -155,9 +155,9 @@ test('to-dos are flattened out of bucket groups', async () => {
   ];
   const { items, notice } = await source(scripted(reply({ ok: true, data }))).list({ kind: 'todo' });
   assert.deepEqual(items, [
-    { type: 'todo', id: 1, projectId: 7, projectName: 'P', title: 'T', description: 'Fix login', appUrl: APP_TODO },
-    { type: 'todo', id: 2, projectId: 7, projectName: 'P', title: 'U', description: '', appUrl: `${APP_TODO}2` },
-    { type: 'todo', id: 3, projectId: 8, projectName: 'Q', title: 'V', description: 'Fix login', appUrl: APP_TODO }
+    { type: 'todo', id: 1, projectId: 7, projectName: 'P', title: 'T', description: 'Fix login', appUrl: APP_TODO, state: 'open' },
+    { type: 'todo', id: 2, projectId: 7, projectName: 'P', title: 'U', description: '', appUrl: `${APP_TODO}2`, state: 'open' },
+    { type: 'todo', id: 3, projectId: 8, projectName: 'Q', title: 'V', description: 'Fix login', appUrl: APP_TODO, state: 'open' }
   ]);
   assert.equal(notice, undefined);
 });
@@ -176,8 +176,8 @@ test('cards come from a flat array, appUrl from app_url, description from descri
   ];
   const { items } = await source(scripted(reply({ ok: true, data, summary: 's', notice: 'n' }))).list({ kind: 'card', projectId: 7 });
   assert.deepEqual(items, [
-    { type: 'card', id: 55, projectId: 7, projectName: 'P', title: 'Card', description: 'Do it', appUrl: APP_CARD },
-    { type: 'card', id: 56, projectId: 7, projectName: 'P', title: 'No body', description: '', appUrl: `${APP_CARD}6` }
+    { type: 'card', id: 55, projectId: 7, projectName: 'P', title: 'Card', description: 'Do it', appUrl: APP_CARD, state: '9' },
+    { type: 'card', id: 56, projectId: 7, projectName: 'P', title: 'No body', description: '', appUrl: `${APP_CARD}6`, state: '9' }
   ]);
 });
 
@@ -186,7 +186,7 @@ test('get returns one normalized item', async () => {
     type: 'card', id: 55, projectId: 7
   });
   assert.deepEqual(item, {
-    type: 'card', id: 55, projectId: 7, projectName: 'P', title: 'Card', description: 'Hi', appUrl: APP_CARD
+    type: 'card', id: 55, projectId: 7, projectName: 'P', title: 'Card', description: 'Hi', appUrl: APP_CARD, state: '9'
   });
 });
 

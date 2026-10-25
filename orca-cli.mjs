@@ -32,13 +32,13 @@ export function resolveOrcaCli({
 const cli = resolveOrcaCli()
 export const orcaBin = cli.bin
 
-export function orcaCli(args) {
-  return new Promise((resolve, reject) => {
-    execFile(
-      orcaBin,
-      [...args, '--json'],
-      { env: cli.env, windowsHide: true, timeout: 30_000 },
-      (error, stdout, stderr) => {
+const DEFAULT_TIMEOUT_MS = 30_000
+
+// `execFile` is injectable so the per-call timeout can be asserted without spawning a process.
+export function createOrcaCli({ execFile: exec = execFile, bin, env }) {
+  return function run(args, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+    return new Promise((resolve, reject) => {
+      exec(bin, [...args, '--json'], { env, windowsHide: true, timeout: timeoutMs }, (error, stdout, stderr) => {
         let reply
         try {
           reply = JSON.parse(stdout)
@@ -51,7 +51,9 @@ export function orcaCli(args) {
           return
         }
         resolve(reply.result)
-      }
-    )
-  })
+      })
+    })
+  }
 }
+
+export const orcaCli = createOrcaCli({ bin: orcaBin, env: cli.env })

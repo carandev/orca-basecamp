@@ -2,10 +2,12 @@ import { childEnv, cliNotFoundMessage, DEFAULT_BIN } from '../config.mjs';
 import { htmlToText } from '../domain/html-text.mjs';
 
 const READ_TIMEOUT_MS = 20_000;
-const COMPLETE_TIMEOUT_MS = 10_000;
+const WRITE_TIMEOUT_MS = 10_000;
 const NUMERIC = /^\d+$/;
 const INACCESSIBLE = /not.?found|404|forbidden|permission|403/i;
 const ALREADY = /already/i;
+const MAPPABLE_COLUMN = 'Kanban::Column';
+const DONE_COLUMN = 'Kanban::DoneColumn';
 
 /** Typed failure of the work-item source. `retryable` is informational: nothing retries automatically. */
 export class SourceError extends Error {
@@ -27,6 +29,12 @@ function numericId(value, name) {
   return text;
 }
 
+const errorFrom = (e) =>
+  fail(String(e.code ?? 'cli_error'), String(e.error ?? 'The basecamp CLI reported an error'), {
+    hint: typeof e.hint === 'string' ? e.hint : '',
+    retryable: e.retryable === true
+  });
+
 function itemType(type) {
   if (type !== 'todo' && type !== 'card') throw fail('invalid_argument', `Unknown item type "${type}"`);
   return type;
@@ -47,6 +55,13 @@ function parseEnvelope(...texts) {
   return null;
 }
 
+/** To-do: 'open' | 'completed'. Card: 'completed' or the NUMERIC id of its column (never the name). */
+function stateOf(raw, type) {
+  if (type === 'todo') return raw.completed === true ? 'completed' : 'open';
+  if (raw.completed === true || raw.parent?.type === DONE_COLUMN) return 'completed';
+  return raw.parent?.id == null ? undefined : String(raw.parent.id);
+}
+
 function normalize(raw, type, bucket, fallbackProjectId) {
   if (!isObject(raw) || typeof raw.title !== 'string' || typeof raw.app_url !== 'string' || raw.id == null) {
     throw fail('bad_output', 'The basecamp CLI returned an item without id, title or app_url');
@@ -60,7 +75,8 @@ function normalize(raw, type, bucket, fallbackProjectId) {
     projectName: typeof b?.name === 'string' ? b.name : '',
     title: raw.title,
     description: htmlToText(raw.description),
-    appUrl: raw.app_url
+    appUrl: raw.app_url,
+    state: stateOf(raw, type)
   };
 }
 
@@ -91,11 +107,13 @@ export function createBasecampSource({ spawner, config, env, configFile }) {
     return envelope;
   }
 
-  const errorFrom = (e) =>
-    fail(String(e.code ?? 'cli_error'), String(e.error ?? 'The basecamp CLI reported an error'), {
-      hint: typeof e.hint === 'string' ? e.hint : '',
-      retryable: e.retryable === true
-    });
+  async function getItem({ type, id, projectId }) {
+    const kind = itemType(type);
+    const args = [kind === 'todo' ? 'todos' : 'cards', 'show', numericId(id, 'id'), '--in', numericId(projectId, 'projectId')];
+    const envelope = await read(args);
+    if (!isObject(envelope.data)) throw fail('bad_output', 'Expected a single item');
+    return normalize(envelope.data, kind, undefined, projectId);
+  }
 
   return {
     async list(query) {
@@ -124,25 +142,54 @@ export function createBasecampSource({ spawner, config, env, configFile }) {
       return envelope.data.map((p) => ({ id: p.id, name: p.name }));
     },
 
-    async get({ type, id, projectId }) {
-      const kind = itemType(type);
-      const args = [kind === 'todo' ? 'todos' : 'cards', 'show', numericId(id, 'id'), '--in', numericId(projectId, 'projectId')];
-      const envelope = await read(args);
-      if (!isObject(envelope.data)) throw fail('bad_output', 'Expected a single item');
-      return normalize(envelope.data, kind, undefined, projectId);
+    get: getItem,
+
+    /** Sync state of an item: see `stateOf`. */
+    async state({ type, id, projectId }) {
+      const { state } = await getItem({ type, id, projectId });
+      if (state === undefined) throw fail('bad_output', 'The basecamp CLI returned a card without a column');
+      return state;
     },
 
     async complete({ type, id, projectId }) {
       const kind = itemType(type);
       const verb = kind === 'todo' ? ['todos', 'complete'] : ['cards', 'done'];
-      const envelope = await call([...verb, numericId(id, 'id'), '--in', numericId(projectId, 'projectId')], COMPLETE_TIMEOUT_MS);
-      if (envelope.ok) return { status: 'completed' };
-      const text = `${envelope.code ?? ''} ${envelope.error ?? ''}`;
-      if (ALREADY.test(text)) return { status: 'already' };
-      if (INACCESSIBLE.test(text)) return { status: 'inaccessible' };
-      throw errorFrom(envelope);
+      return outcome(await call([...verb, numericId(id, 'id'), '--in', numericId(projectId, 'projectId')], WRITE_TIMEOUT_MS), 'completed');
+    },
+
+    /** Reopens a to-do (`todos uncomplete`). */
+    async reopen({ id, projectId }) {
+      const args = ['todos', 'uncomplete', numericId(id, 'id'), '--in', numericId(projectId, 'projectId')];
+      return outcome(await call(args, WRITE_TIMEOUT_MS), 'reopened');
+    },
+
+    /** Card columns of the project's card table; only plain columns are valid mapping targets. */
+    async columns({ projectId }) {
+      const envelope = await read(['cards', 'columns', '--in', numericId(projectId, 'projectId')]);
+      if (!Array.isArray(envelope.data)) throw fail('bad_output', 'Expected a list of columns');
+      return envelope.data.map((c) => ({
+        id: String(c.id),
+        name: String(c.title ?? c.name),
+        type: c.type,
+        mappable: c.type === MAPPABLE_COLUMN
+      }));
+    },
+
+    /** Moves a card to a column by numeric id (a name would need `--card-table`). */
+    async move({ id, projectId, columnId }) {
+      const args = ['cards', 'move', numericId(id, 'id'), '--to', numericId(columnId, 'columnId'), '--in', numericId(projectId, 'projectId')];
+      return outcome(await call(args, WRITE_TIMEOUT_MS), 'moved');
     }
   };
+}
+
+/** Maps a write envelope to `{status}`: ok, `already`, `inaccessible`, or a thrown SourceError. */
+function outcome(envelope, okStatus) {
+  if (envelope.ok) return { status: okStatus };
+  const text = `${envelope.code ?? ''} ${envelope.error ?? ''}`;
+  if (ALREADY.test(text)) return { status: 'already' };
+  if (INACCESSIBLE.test(text)) return { status: 'inaccessible' };
+  throw errorFrom(envelope);
 }
 
 function withNotice(items, envelope) {

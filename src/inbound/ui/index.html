@@ -40,6 +40,7 @@
     <div class="row">
       <label>Repository (required)<select id="repo"></select></label>
       <label>Agent (optional)<input type="text" id="agent" placeholder="claude" spellcheck="false" maxlength="40"></label>
+      <label class="check"><input type="checkbox" id="mine" checked> Only mine</label>
     </div>
     <div id="list"></div>
   </div>
@@ -260,14 +261,14 @@
     $('tab-todo').className = kind === 'todo' ? 'on' : '';
     $('tab-card').className = kind === 'card' ? 'on' : '';
     $('tab-sync').className = kind === 'sync' ? 'on' : '';
-    $('project-wrap').hidden = kind !== 'card';
+    $('project-wrap').hidden = kind !== 'card' || $('mine').checked;
     $('sync').hidden = kind !== 'sync';
     $('picker').hidden = kind === 'sync';
     $('list').textContent = '';
     say('', '');
     if (kind === 'sync') return loadSync();
-    var path = '/api/items?kind=' + kind;
-    if (kind === 'card') {
+    var path = '/api/items?kind=' + kind + '&mine=' + ($('mine').checked ? '1' : '0');
+    if (kind === 'card' && !$('mine').checked) {
       if (!$('project').value) return say('info', 'Choose a project.');
       path += '&projectId=' + encodeURIComponent($('project').value);
     }
@@ -282,6 +283,7 @@
   $('tab-card').addEventListener('click', function () { kind = 'card'; load(); });
   $('tab-sync').addEventListener('click', function () { kind = 'sync'; load(); });
   $('project').addEventListener('change', load);
+  $('mine').addEventListener('change', load);
   $('sync-project').addEventListener('change', loadGrid);
   $('sync-add').addEventListener('click', addStatus);
   $('sync-save').addEventListener('click', saveSync);

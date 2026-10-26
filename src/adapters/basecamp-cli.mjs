@@ -117,17 +117,17 @@ export function createBasecampSource({ spawner, config, env, configFile }) {
 
   return {
     async list(query) {
+      const mine = query?.mine === true;
       if (query?.kind === 'todo') {
-        const envelope = await read(['todos', 'list', '--all-projects']);
-        if (!Array.isArray(envelope.data)) throw fail('bad_output', 'Expected a list of bucket groups');
-        const items = [];
-        for (const group of envelope.data) {
-          if (!isObject(group) || !Array.isArray(group.todos)) throw fail('bad_output', 'Expected a bucket group with todos');
-          for (const raw of group.todos) items.push(normalize(raw, 'todo', group.bucket));
-        }
-        return withNotice(items, envelope);
+        const envelope = await read(['todos', 'list', '--all-projects', ...(mine ? ['--assignee', 'me'] : [])]);
+        return withNotice(flattenGroups(envelope, 'todos', 'todo'), envelope);
       }
       if (query?.kind === 'card') {
+        if (mine) {
+          // `--assignee` only works account-wide (it cannot be combined with `--in`), so no projectId is involved.
+          const envelope = await read(['cards', 'list', '--assignee', 'me']);
+          return withNotice(flattenGroups(envelope, 'cards', 'card'), envelope);
+        }
         const projectId = numericId(query.projectId, 'projectId');
         const envelope = await read(['cards', 'list', '--in', projectId]);
         if (!Array.isArray(envelope.data)) throw fail('bad_output', 'Expected a list of cards');
@@ -190,6 +190,17 @@ function outcome(envelope, okStatus) {
   if (ALREADY.test(text)) return { status: 'already' };
   if (INACCESSIBLE.test(text)) return { status: 'inaccessible' };
   throw errorFrom(envelope);
+}
+
+/** Flattens `{data:[{bucket, <field>:[...]}]}` into normalized items, each taking its projectId from its group. */
+function flattenGroups(envelope, field, type) {
+  if (!Array.isArray(envelope.data)) throw fail('bad_output', 'Expected a list of bucket groups');
+  const items = [];
+  for (const group of envelope.data) {
+    if (!isObject(group) || !Array.isArray(group[field])) throw fail('bad_output', `Expected a bucket group with ${field}`);
+    for (const raw of group[field]) items.push(normalize(raw, type, group.bucket));
+  }
+  return items;
 }
 
 function withNotice(items, envelope) {

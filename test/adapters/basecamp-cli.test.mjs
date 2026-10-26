@@ -64,6 +64,50 @@ test('argv: list to-dos account-wide', async () => {
   assert.deepEqual(sp.calls[0].args, ['todos', 'list', '--all-projects', '--json']);
 });
 
+test('argv: list to-dos assigned to me', async () => {
+  const sp = scripted(reply({ ok: true, data: [] }));
+  await source(sp).list({ kind: 'todo', mine: true });
+  assert.deepEqual(sp.calls[0].args, ['todos', 'list', '--all-projects', '--assignee', 'me', '--json']);
+});
+
+test('argv: mine=false keeps the unfiltered to-do and card calls', async () => {
+  const sp = scripted(reply({ ok: true, data: [] }));
+  await source(sp).list({ kind: 'todo', mine: false });
+  await source(sp).list({ kind: 'card', mine: false, projectId: 7 });
+  assert.deepEqual(sp.calls[0].args, ['todos', 'list', '--all-projects', '--json']);
+  assert.deepEqual(sp.calls[1].args, ['cards', 'list', '--in', '7', '--json']);
+});
+
+test('argv: list cards assigned to me is account-wide, with no --in and no projectId needed', async () => {
+  const sp = scripted(reply({ ok: true, data: [] }));
+  await source(sp).list({ kind: 'card', mine: true });
+  assert.deepEqual(sp.calls[0].args, ['cards', 'list', '--assignee', 'me', '--json']);
+});
+
+test('my cards are flattened out of bucket groups with the projectId of each group', async () => {
+  const data = [
+    { bucket: { id: 7, name: 'P', type: 'Project' }, cards: [card(), card({ id: 56, title: 'Two', app_url: `${APP_CARD}6` })] },
+    { bucket: { id: 8, name: 'Q', type: 'Project' }, cards: [card({ id: 57, title: 'Three', app_url: `${APP_CARD}7`, bucket: undefined })] }
+  ];
+  const { items } = await source(scripted(reply({ ok: true, data }))).list({ kind: 'card', mine: true });
+  assert.deepEqual(
+    items.map((i) => [i.id, i.projectId, i.projectName, i.state]),
+    [[55, 7, 'P', '9'], [56, 7, 'P', '9'], [57, 8, 'Q', '9']]
+  );
+});
+
+test('my cards: a group without a cards array is bad_output', async () => {
+  const bad = [{ bucket: { id: 7, name: 'P' } }];
+  await assert.rejects(source(scripted(reply({ ok: true, data: bad }))).list({ kind: 'card', mine: true }), { code: 'bad_output' });
+  await assert.rejects(source(scripted(reply({ ok: true, data: 'nope' }))).list({ kind: 'card', mine: true }), { code: 'bad_output' });
+});
+
+test('cards with mine=false still validate projectId before any spawn', async () => {
+  const sp = scripted(reply({ ok: true, data: [] }));
+  await assert.rejects(source(sp).list({ kind: 'card', mine: false, projectId: 'abc' }), { code: 'invalid_argument' });
+  assert.equal(sp.calls.length, 0);
+});
+
 test('argv: list projects', async () => {
   const sp = scripted(reply({ ok: true, data: [] }));
   await source(sp).projects();

@@ -225,14 +225,44 @@ test('repos, projects and items are served from the ports, with the CLI notice',
   assert.equal(items.items[0].title, 'Real title');
   assert.equal(items.notice, 'capped');
   json(await get(port, '/api/items?kind=card&projectId=7'));
-  assert.deepEqual(s.sourceCalls.at(-1), ['list', { kind: 'card', projectId: '7' }]);
+  assert.deepEqual(s.sourceCalls.at(-1), ['list', { kind: 'card', mine: true }]);
+});
+
+test('mine defaults to 1: to-dos and cards are asked for my items, and a card projectId is ignored', async () => {
+  const { port, s } = await start();
+  json(await get(port, '/api/items?kind=todo'));
+  assert.deepEqual(s.sourceCalls.at(-1), ['list', { kind: 'todo', mine: true }]);
+  json(await get(port, '/api/items?kind=card'));
+  assert.deepEqual(s.sourceCalls.at(-1), ['list', { kind: 'card', mine: true }]);
+  json(await get(port, '/api/items?kind=card&mine=1&projectId=7'));
+  assert.deepEqual(s.sourceCalls.at(-1), ['list', { kind: 'card', mine: true }]);
+  json(await get(port, '/api/items?kind=card&projectId=7;rm'));
+  assert.deepEqual(s.sourceCalls.at(-1), ['list', { kind: 'card', mine: true }]);
+});
+
+test('mine=0 asks for everything; cards then need a numeric projectId', async () => {
+  const { port, s } = await start();
+  json(await get(port, '/api/items?kind=todo&mine=0'));
+  assert.deepEqual(s.sourceCalls.at(-1), ['list', { kind: 'todo', mine: false }]);
+  json(await get(port, '/api/items?kind=card&mine=0&projectId=7'));
+  assert.deepEqual(s.sourceCalls.at(-1), ['list', { kind: 'card', mine: false, projectId: '7' }]);
+  const before = s.sourceCalls.length;
+  assert.equal((await get(port, '/api/items?kind=card&mine=0')).status, 400);
+  assert.equal((await get(port, '/api/items?kind=card&mine=0&projectId=7;rm')).status, 400);
+  assert.equal(s.sourceCalls.length, before);
+});
+
+test('any other mine value is 400 and never reaches the source', async () => {
+  const { port, s } = await start();
+  for (const value of ['2', 'true', '', 'yes', '01']) {
+    assert.equal((await get(port, `/api/items?kind=todo&mine=${value}`)).status, 400, `mine=${value}`);
+  }
+  assert.deepEqual(s.sourceCalls, []);
 });
 
 test('bad item queries are 400 and never reach the source', async () => {
   const { port, s } = await start();
   assert.equal((await get(port, '/api/items?kind=other')).status, 400);
-  assert.equal((await get(port, '/api/items?kind=card')).status, 400);
-  assert.equal((await get(port, '/api/items?kind=card&projectId=7;rm')).status, 400);
   assert.deepEqual(s.sourceCalls, []);
 });
 

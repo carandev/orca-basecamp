@@ -22,6 +22,8 @@ Requires Orca >= 1.4.0 and Node 22 or newer for development.
 | Basecamp: Complete linked item | Completes the item linked to the active worktree and keeps the link, so later changes still sync. If it fails, the link is kept too |
 | Basecamp: Sync now | Runs one sync pass right away and waits for it (up to 20 s) |
 
+The picker shows only items assigned to you by default. Uncheck **Only mine** to show everything visible to you. With it checked, cards are listed account-wide, so the project select is hidden; unchecked, cards are listed for the chosen project. Unfiltered to-dos are capped at 100 by the CLI default, and the picker shows the CLI's notice when that happens.
+
 Open and Complete are always available. With no linked item they only notify "No linked item".
 
 When a linked worktree is removed, its item is completed once (10 s limit, no retries) and the link is deleted. If that fails, the notification carries the title and URL so you can finish by hand. This happens whether sync is on or off.

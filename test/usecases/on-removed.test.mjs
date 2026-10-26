@@ -138,6 +138,20 @@ test('listItems asks for the account-wide to-dos and ignores a stray projectId',
   assert.deepEqual(calls, [{ kind: 'todo' }]);
 });
 
+test('listItems passes mine through for to-dos and for cards', async () => {
+  const calls = [];
+  const source = { list: async (q) => (calls.push(q), { items: [] }) };
+  await listItems({ source, kind: 'todo', mine: true });
+  await listItems({ source, kind: 'card', mine: true });
+  await listItems({ source, kind: 'card', mine: false, projectId: '7' });
+  assert.deepEqual(calls, [
+    { kind: 'todo', mine: true },
+    { kind: 'card', mine: true },
+    { kind: 'card', mine: false, projectId: '7' }
+  ]);
+  await assert.rejects(listItems({ source, kind: 'card', mine: false }), /projectId/);
+});
+
 test('listItems passes the project for cards and rejects a missing one without calling the source', async () => {
   const calls = [];
   const source = { list: async (q) => (calls.push(q), { items: [] }) };

@@ -98,8 +98,12 @@ export function createUiServer({
   async function items(res, url) {
     const kind = url.searchParams.get('kind');
     if (!KINDS.includes(kind)) return fail(res, 400, 'kind must be "todo" or "card"');
-    const query = { kind };
-    if (kind === 'card') {
+    const mineParam = url.searchParams.get('mine');
+    if (mineParam !== null && mineParam !== '0' && mineParam !== '1') return fail(res, 400, 'mine must be 0 or 1');
+    const mine = mineParam !== '0';
+    const query = { kind, mine };
+    // "Only mine" cards are account-wide, so a projectId is neither needed nor used.
+    if (kind === 'card' && !mine) {
       const projectId = numericId(url.searchParams.get('projectId'));
       if (projectId === null) return fail(res, 400, 'projectId must be a numeric id');
       query.projectId = projectId;

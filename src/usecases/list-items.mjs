@@ -1,10 +1,12 @@
-/** Items for the picker. To-dos are account-wide (a projectId is ignored); cards need a project unless `mine` (account-wide). */
+const present = (value) => value !== undefined && value !== null && value !== '';
+
+/** Items for the picker. A projectId narrows to-dos and cards; only cards without `mine` require one. */
 export async function listItems({ source, kind, projectId, mine }) {
-  const scope = mine === undefined ? {} : { mine };
-  if (kind === 'todo') return source.list({ kind, ...scope });
+  const query = { kind, ...(mine === undefined ? {} : { mine }), ...(present(projectId) ? { projectId } : {}) };
+  if (kind === 'todo') return source.list(query);
   if (kind === 'card') {
-    if (mine !== true && (projectId === undefined || projectId === null || projectId === '')) throw new Error('projectId is required for cards');
-    return source.list(mine === true ? { kind, ...scope } : { kind, ...scope, projectId });
+    if (mine !== true && !present(projectId)) throw new Error('projectId is required for cards');
+    return source.list(query);
   }
   throw new Error(`Unknown kind "${kind}"`);
 }

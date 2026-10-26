@@ -230,18 +230,14 @@ test('repos, projects and items are served from the ports, with the CLI notice',
   assert.equal(items.items[0].title, 'Real title');
   assert.equal(items.notice, 'capped');
   json(await get(port, '/api/items?kind=card&projectId=7'));
-  assert.deepEqual(s.sourceCalls.at(-1), ['list', { kind: 'card', mine: true }]);
+  assert.deepEqual(s.sourceCalls.at(-1), ['list', { kind: 'card', mine: true, projectId: '7' }]);
 });
 
-test('mine defaults to 1: to-dos and cards are asked for my items, and a card projectId is ignored', async () => {
+test('mine defaults to 1: to-dos and cards are asked for my items', async () => {
   const { port, s } = await start();
   json(await get(port, '/api/items?kind=todo'));
   assert.deepEqual(s.sourceCalls.at(-1), ['list', { kind: 'todo', mine: true }]);
   json(await get(port, '/api/items?kind=card'));
-  assert.deepEqual(s.sourceCalls.at(-1), ['list', { kind: 'card', mine: true }]);
-  json(await get(port, '/api/items?kind=card&mine=1&projectId=7'));
-  assert.deepEqual(s.sourceCalls.at(-1), ['list', { kind: 'card', mine: true }]);
-  json(await get(port, '/api/items?kind=card&projectId=7;rm'));
   assert.deepEqual(s.sourceCalls.at(-1), ['list', { kind: 'card', mine: true }]);
 });
 
@@ -592,4 +588,23 @@ test('link sessions are unguessable and distinct', async () => {
   const b = server.createLinkSession({ worktreeId: 'w1', displayName: 'a' });
   assert.match(a, /^[0-9a-f]{32,}$/);
   assert.notEqual(a, b);
+});
+
+test('projectId is optional for to-dos and my cards, passed through when present, and 400 when not numeric', async () => {
+  const { port, s } = await start();
+  json(await get(port, '/api/items?kind=todo&projectId=7'));
+  assert.deepEqual(s.sourceCalls.at(-1), ['list', { kind: 'todo', mine: true, projectId: '7' }]);
+  json(await get(port, '/api/items?kind=todo&mine=0&projectId=7'));
+  assert.deepEqual(s.sourceCalls.at(-1), ['list', { kind: 'todo', mine: false, projectId: '7' }]);
+  json(await get(port, '/api/items?kind=card&mine=1&projectId=7'));
+  assert.deepEqual(s.sourceCalls.at(-1), ['list', { kind: 'card', mine: true, projectId: '7' }]);
+  json(await get(port, '/api/items?kind=card&mine=1'));
+  assert.deepEqual(s.sourceCalls.at(-1), ['list', { kind: 'card', mine: true }]);
+  json(await get(port, '/api/items?kind=todo&projectId='));
+  assert.deepEqual(s.sourceCalls.at(-1), ['list', { kind: 'todo', mine: true }]);
+  const before = s.sourceCalls.length;
+  for (const q of ['kind=todo&projectId=7;rm', 'kind=todo&mine=0&projectId=abc', 'kind=card&mine=1&projectId=7;rm', 'kind=card&projectId=-1']) {
+    assert.equal((await get(port, `/api/items?${q}`)).status, 400, q);
+  }
+  assert.equal(s.sourceCalls.length, before);
 });

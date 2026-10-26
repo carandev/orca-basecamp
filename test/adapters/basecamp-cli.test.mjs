@@ -334,3 +334,48 @@ test('complete: any other failure is thrown as a SourceError, once', async () =>
   await assert.rejects(source(sp).complete({ type: 'todo', id: 1, projectId: 7 }), { code: 'api', hint: 'later' });
   assert.equal(sp.calls.length, 1);
 });
+
+// ---- project filter --------------------------------------------------------
+
+test('argv: to-dos of one project assigned to me use --in and --assignee', async () => {
+  const sp = scripted(reply({ ok: true, data: [] }));
+  await source(sp).list({ kind: 'todo', mine: true, projectId: '7' });
+  assert.deepEqual(sp.calls[0].args, ['todos', 'list', '--in', '7', '--assignee', 'me', '--json']);
+});
+
+test('argv: all to-dos of one project use --in only', async () => {
+  const sp = scripted(reply({ ok: true, data: [] }));
+  await source(sp).list({ kind: 'todo', mine: false, projectId: 7 });
+  assert.deepEqual(sp.calls[0].args, ['todos', 'list', '--in', '7', '--json']);
+});
+
+test('flat to-do responses normalize with projectId and projectName from each bucket', async () => {
+  const data = [todo(), todo({ id: 2, title: 'U', app_url: `${APP_TODO}2`, bucket: { id: 8, name: 'Q', type: 'Project' } })];
+  const { items } = await source(scripted(reply({ ok: true, data }))).list({ kind: 'todo', mine: true, projectId: '7' });
+  assert.deepEqual(items.map((i) => [i.type, i.id, i.projectId, i.projectName, i.state]), [['todo', 1, 7, 'P', 'open'], ['todo', 2, 8, 'Q', 'open']]);
+  await assert.rejects(source(scripted(reply({ ok: true, data: 'nope' }))).list({ kind: 'todo', projectId: '7' }), { code: 'bad_output' });
+});
+
+test('argv: my cards of one project stay account-wide (no --in) and are filtered by project', async () => {
+  const data = [
+    { bucket: { id: 7, name: 'P', type: 'Project' }, cards: [card()] },
+    { bucket: { id: 8, name: 'Q', type: 'Project' }, cards: [card({ id: 57, title: 'Three', app_url: `${APP_CARD}7` })] }
+  ];
+  const sp = scripted(reply({ ok: true, data }));
+  const { items } = await source(sp).list({ kind: 'card', mine: true, projectId: '7' });
+  assert.deepEqual(sp.calls[0].args, ['cards', 'list', '--assignee', 'me', '--json']);
+  assert.ok(!sp.calls[0].args.includes('--in'));
+  assert.deepEqual(items.map((i) => [i.id, i.projectId]), [[55, 7]]);
+});
+
+test('a non-numeric projectId is rejected before any spawn', async () => {
+  const sp = scripted(reply({ ok: true, data: [] }));
+  for (const query of [
+    { kind: 'todo', mine: true, projectId: 'abc' },
+    { kind: 'todo', mine: false, projectId: '7;rm' },
+    { kind: 'card', mine: true, projectId: '--all' }
+  ]) {
+    await assert.rejects(source(sp).list(query), { code: 'invalid_argument' });
+  }
+  assert.equal(sp.calls.length, 0);
+});

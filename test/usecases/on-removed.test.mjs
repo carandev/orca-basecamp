@@ -131,10 +131,10 @@ test('a missing worktreeId is ignored', async () => {
 
 // ---- list-items ------------------------------------------------------------
 
-test('listItems asks for the account-wide to-dos and ignores a stray projectId', async () => {
+test('listItems asks for the account-wide to-dos when no project is given', async () => {
   const calls = [];
   const source = { list: async (q) => (calls.push(q), { items: [{ id: 1 }], notice: 'capped' }) };
-  assert.deepEqual(await listItems({ source, kind: 'todo', projectId: 7 }), { items: [{ id: 1 }], notice: 'capped' });
+  assert.deepEqual(await listItems({ source, kind: 'todo' }), { items: [{ id: 1 }], notice: 'capped' });
   assert.deepEqual(calls, [{ kind: 'todo' }]);
 });
 
@@ -165,4 +165,15 @@ test('listItems passes the project for cards and rejects a missing one without c
 test('listProjects delegates to the source', async () => {
   const source = { projects: async () => [{ id: 7, name: 'P' }] };
   assert.deepEqual(await listProjects({ source }), [{ id: 7, name: 'P' }]);
+});
+
+test('listItems passes projectId through for to-dos and for my cards', async () => {
+  const calls = [];
+  const source = { list: async (q) => (calls.push(q), { items: [] }) };
+  await listItems({ source, kind: 'todo', mine: true, projectId: '7' });
+  await listItems({ source, kind: 'card', mine: true, projectId: '7' });
+  assert.deepEqual(calls, [
+    { kind: 'todo', mine: true, projectId: '7' },
+    { kind: 'card', mine: true, projectId: '7' }
+  ]);
 });

@@ -38,7 +38,7 @@
     <button type="button" id="tab-todo" class="on">To-dos</button>
     <button type="button" id="tab-card">Cards</button>
     <button type="button" id="tab-sync">Sync</button>
-    <label id="project-wrap" hidden>Project (cards)<select id="project"></select></label>
+    <label id="project-wrap">Project<select id="project"></select></label>
   </div>
   <div id="picker">
     <div class="row">
@@ -113,6 +113,19 @@
       o.textContent = r.name || String(r.id);
       select.appendChild(o);
     });
+  }
+
+  /** Project filter of the picker tabs: "All projects" (value "") first, then every project. */
+  function fillProjectFilter() {
+    var select = $('project');
+    var chosen = select.value;
+    fill(select, projects);
+    var all = document.createElement('option');
+    all.value = '';
+    all.textContent = 'All projects';
+    select.insertBefore(all, select.firstChild);
+    select.value = chosen;
+    if (select.value !== chosen) select.value = '';
   }
 
   function start(item, button) {
@@ -309,17 +322,14 @@
     $('tab-todo').className = kind === 'todo' ? 'on' : '';
     $('tab-card').className = kind === 'card' ? 'on' : '';
     $('tab-sync').className = kind === 'sync' ? 'on' : '';
-    $('project-wrap').hidden = kind !== 'card' || $('mine').checked;
     $('sync').hidden = kind !== 'sync';
     $('picker').hidden = kind === 'sync';
     $('list').textContent = '';
     say('', '');
     if (kind === 'sync') return loadSync();
     var path = '/api/items?kind=' + kind + '&mine=' + ($('mine').checked ? '1' : '0');
-    if (kind === 'card' && !$('mine').checked) {
-      if (!$('project').value) return say('info', 'Choose a project.');
-      path += '&projectId=' + encodeURIComponent($('project').value);
-    }
+    if ($('project').value) path += '&projectId=' + encodeURIComponent($('project').value);
+    else if (kind === 'card' && !$('mine').checked) return say('info', 'Choose a project.');
     api('GET', path).then(function (j) {
       if (!j.ok) return say('error', problem(j));
       if (j.notice) say('info', j.notice);
@@ -355,7 +365,7 @@
   api('GET', '/api/projects').then(function (j) {
     if (!j.ok) return;
     projects = j.projects;
-    fill($('project'), projects);
+    fillProjectFilter();
   });
   load();
 })();

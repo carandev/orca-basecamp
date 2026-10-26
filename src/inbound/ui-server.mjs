@@ -127,11 +127,14 @@ export function createUiServer({
     if (mineParam !== null && mineParam !== '0' && mineParam !== '1') return fail(res, 400, 'mine must be 0 or 1');
     const mine = mineParam !== '0';
     const query = { kind, mine };
-    // "Only mine" cards are account-wide, so a projectId is neither needed nor used.
-    if (kind === 'card' && !mine) {
-      const projectId = numericId(url.searchParams.get('projectId'));
+    // projectId narrows every list; it is required only for cards that are not "mine".
+    const rawProject = url.searchParams.get('projectId');
+    if (rawProject !== null && rawProject !== '') {
+      const projectId = numericId(rawProject);
       if (projectId === null) return fail(res, 400, 'projectId must be a numeric id');
       query.projectId = projectId;
+    } else if (kind === 'card' && !mine) {
+      return fail(res, 400, 'projectId must be a numeric id');
     }
     try {
       const { items: list, notice } = await source.list(query);

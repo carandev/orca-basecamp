@@ -118,20 +118,31 @@ export function createBasecampSource({ spawner, config, env, configFile }) {
   return {
     async list(query) {
       const mine = query?.mine === true;
+      const hasProject = query?.projectId !== undefined && query.projectId !== null && query.projectId !== '';
+      const projectId = hasProject ? numericId(query.projectId, 'projectId') : undefined;
+      const assignee = mine ? ['--assignee', 'me'] : [];
       if (query?.kind === 'todo') {
-        const envelope = await read(['todos', 'list', '--all-projects', ...(mine ? ['--assignee', 'me'] : [])]);
+        if (projectId !== undefined) {
+          // Per project the CLI returns a flat array whose todos each carry their own bucket.
+          const envelope = await read(['todos', 'list', '--in', projectId, ...assignee]);
+          if (!Array.isArray(envelope.data)) throw fail('bad_output', 'Expected a list of to-dos');
+          return withNotice(envelope.data.map((raw) => normalize(raw, 'todo', undefined, projectId)), envelope);
+        }
+        const envelope = await read(['todos', 'list', '--all-projects', ...assignee]);
         return withNotice(flattenGroups(envelope, 'todos', 'todo'), envelope);
       }
       if (query?.kind === 'card') {
         if (mine) {
-          // `--assignee` only works account-wide (it cannot be combined with `--in`), so no projectId is involved.
+          // `--assignee` only works account-wide (it cannot be combined with `--in`), so a project is filtered here.
           const envelope = await read(['cards', 'list', '--assignee', 'me']);
-          return withNotice(flattenGroups(envelope, 'cards', 'card'), envelope);
+          const result = withNotice(flattenGroups(envelope, 'cards', 'card'), envelope);
+          if (projectId !== undefined) result.items = result.items.filter((item) => String(item.projectId) === projectId);
+          return result;
         }
-        const projectId = numericId(query.projectId, 'projectId');
-        const envelope = await read(['cards', 'list', '--in', projectId]);
+        const project = numericId(query.projectId, 'projectId');
+        const envelope = await read(['cards', 'list', '--in', project]);
         if (!Array.isArray(envelope.data)) throw fail('bad_output', 'Expected a list of cards');
-        return withNotice(envelope.data.map((raw) => normalize(raw, 'card', undefined, projectId)), envelope);
+        return withNotice(envelope.data.map((raw) => normalize(raw, 'card', undefined, project)), envelope);
       }
       throw fail('invalid_argument', `Unknown list kind "${query?.kind}"`);
     },

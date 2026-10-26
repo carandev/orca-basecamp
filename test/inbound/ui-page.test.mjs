@@ -13,9 +13,8 @@ test('"Only mine" is a checkbox, checked by default, outside the Sync panel', ()
   assert.ok(page.indexOf('id="mine"') < page.indexOf('<div id="sync"'));
 });
 
-test('the list request carries mine=1|0 and cards only send projectId when not "mine"', () => {
+test('the list request carries mine=1|0', () => {
   assert.match(page, /'&mine=' \+ \(\$\('mine'\)\.checked \? '1' : '0'\)/);
-  assert.match(page, /\$\('project-wrap'\)\.hidden = kind !== 'card' \|\| \$\('mine'\)\.checked/);
   assert.match(page, /\$\('mine'\)\.addEventListener\('change', load\)/);
 });
 
@@ -48,4 +47,13 @@ test('link mode hides the repository and agent selectors and the Sync tab, keepi
 test('link mode replaces Start with a Link button that posts only ids and the session to /api/link', () => {
   assert.match(page, /button\.textContent = linkMode \? 'Link' : 'Start'/);
   assert.match(page, /api\('POST', '\/api\/link', \{ type: item\.type, id: item\.id, projectId: item\.projectId, session: session \}\)/);
+});
+
+test('the project select is always visible, defaults to "All projects", and reloads the list', () => {
+  assert.doesNotMatch(page, /project-wrap'\)\.hidden/);
+  assert.doesNotMatch(page, /id="project-wrap" hidden/);
+  assert.match(page, /&projectId=' \+ encodeURIComponent\(\$\('project'\)\.value\)/);
+  assert.match(page, /'Choose a project\.'/);
+  assert.match(page, /\$\('project'\)\.addEventListener\('change', load\)/);
+  assert.match(page, /'All projects'/);
 });

@@ -54,6 +54,7 @@
   <div id="sync" hidden>
     <div class="row">
       <label class="check"><input type="checkbox" id="sync-enabled"> Sync statuses between Orca and Basecamp</label>
+      <label class="check"><input type="checkbox" id="sync-remove-on-complete"> Remove worktree when done</label>
       <label>When both sides changed
         <select id="sync-rule">
           <option value="orca-wins">Orca wins</option>
@@ -284,6 +285,7 @@
   function saveSync() {
     commitGrid();
     cfg.enabled = $('sync-enabled').checked;
+    cfg.removeOnComplete = $('sync-remove-on-complete').checked;
     cfg.conflictRule = $('sync-rule').value;
     var button = $('sync-save');
     button.disabled = true;
@@ -314,6 +316,7 @@
       if (!j.ok) return say('error', problem(j));
       cfg = j.config;
       $('sync-enabled').checked = cfg.enabled;
+      $('sync-remove-on-complete').checked = cfg.removeOnComplete === true;
       $('sync-rule').value = cfg.conflictRule;
       gridProject = '';
       fill($('sync-project'), projects);

@@ -21,22 +21,23 @@ test('the key is sync:config', () => {
 
 test('get returns the defaults when nothing is stored', async () => {
   const { config } = setup();
-  assert.deepEqual(await config.get(), { enabled: true, conflictRule: 'orca-wins', statusToColumn: {} });
+  assert.deepEqual(await config.get(), { enabled: true, conflictRule: 'orca-wins', removeOnComplete: false, statusToColumn: {} });
 });
 
 test('get returns a stored config and repairs a damaged one', async () => {
-  const good = { enabled: false, conflictRule: 'basecamp-wins', statusToColumn: { 7: { 'in-review': ['9'] } } };
+  const good = { enabled: false, conflictRule: 'basecamp-wins', removeOnComplete: false, statusToColumn: { 7: { 'in-review': ['9'] } } };
   assert.deepEqual(await setup(good).config.get(), good);
   assert.deepEqual(await setup({ enabled: 'yes', conflictRule: 'x' }).config.get(), {
     enabled: true,
     conflictRule: 'orca-wins',
+    removeOnComplete: false,
     statusToColumn: {}
   });
 });
 
 test('save stores a valid config under sync:config and get reads it back', async () => {
   const { config, store } = setup();
-  const body = { enabled: false, conflictRule: 'basecamp-wins', statusToColumn: { 7: { 'in-review': ['9'] } } };
+  const body = { enabled: false, conflictRule: 'basecamp-wins', removeOnComplete: false, statusToColumn: { 7: { 'in-review': ['9'] } } };
   const result = await config.save(body);
   assert.deepEqual(result, { ok: true, value: body });
   assert.deepEqual(store.get('sync:config'), body);

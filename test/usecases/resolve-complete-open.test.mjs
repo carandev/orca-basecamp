@@ -19,9 +19,10 @@ function setup({
   tabError,
   browserError,
   syncConfig = SYNC_ON,
-  setStatusError
+  setStatusError,
+  removeWorktreeError
 } = {}) {
-  const log = { notices: [], completes: [], tabs: [], browser: [], resolves: 0, statusSets: [], order: [] };
+  const log = { notices: [], completes: [], tabs: [], browser: [], resolves: 0, statusSets: [], worktreeRemovals: [], order: [] };
   const store = new Map(Object.entries(links));
   const deps = {
     orca: {
@@ -38,6 +39,11 @@ function setup({
         log.order.push('setStatus');
         log.statusSets.push([id, status]);
         if (setStatusError) throw setStatusError;
+      },
+      removeWorktree: async (id) => {
+        log.order.push('removeWorktree');
+        log.worktreeRemovals.push(id);
+        if (removeWorktreeError) throw removeWorktreeError;
       }
     },
     storage: {
@@ -199,6 +205,31 @@ test('Complete reports a resolution failure and never throws', async () => {
   assert.equal(result.status, 'failed');
   assert.equal(log.completes.length, 0);
   assert.match(log.notices[0].body, /No worktree matches/);
+});
+
+
+test('Complete with removeOnComplete: true removes the worktree after setting status and storing baseline', async () => {
+  const { deps, log } = setup({ syncConfig: { ...SYNC_ON, removeOnComplete: true } });
+  const result = await createCompleteLinked(deps)();
+  assert.equal(result.status, 'completed');
+  assert.deepEqual(log.worktreeRemovals, ['wt-1']);
+  assert.deepEqual(log.order, ['setStatus', 'storage.set', 'removeWorktree']);
+});
+
+test('Complete with removeOnComplete: true notifies failure if worktree removal fails', async () => {
+  const { deps, log } = setup({
+    syncConfig: { ...SYNC_ON, removeOnComplete: true },
+    removeWorktreeError: new Error('worktree is dirty')
+  });
+  const result = await createCompleteLinked(deps)();
+  assert.equal(result.status, 'completed');
+  assert.match(log.notices[0].body, /worktree not removed: worktree is dirty/);
+});
+
+test('Complete with removeOnComplete: false skips worktree removal', async () => {
+  const { deps, log } = setup({ syncConfig: { ...SYNC_ON, removeOnComplete: false } });
+  await createCompleteLinked(deps)();
+  assert.deepEqual(log.worktreeRemovals, []);
 });
 
 // ---- Open ------------------------------------------------------------------

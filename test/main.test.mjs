@@ -15,7 +15,7 @@ const LINK = {
   title: 'Fix login',
   createdAt: 1
 };
-const SYNC_OFF = { enabled: false, conflictRule: 'orca-wins', statusToColumn: {} };
+const SYNC_OFF = { enabled: false, conflictRule: 'orca-wins', removeOnComplete: false, statusToColumn: {} };
 const manifest = JSON.parse(readFileSync(new URL('../orca-plugin.json', import.meta.url), 'utf8'));
 
 /** Records timers instead of running them; `fire(ms)` runs the callbacks registered with that delay. */

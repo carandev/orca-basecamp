@@ -37,9 +37,10 @@ function setup({
   moveResult,
   keysError,
   hooks = {},
-  stateDelay = false
+  stateDelay = false,
+  removeWorktreeError
 } = {}) {
-  const log = { host: [], lists: 0, states: [], completes: [], reopens: [], moves: [], orcaSets: [], notices: [] };
+  const log = { host: [], lists: 0, states: [], completes: [], reopens: [], moves: [], orcaSets: [], orcaRemovals: [], notices: [] };
   const store = new Map(Object.entries(links).map(([id, l]) => [`link:${id}`, l]));
   if (config !== undefined) store.set('sync:config', config);
   let inflight = 0;
@@ -108,6 +109,10 @@ function setup({
       setStatus: async (id, status) => {
         log.orcaSets.push([id, status]);
         orcaStatuses[id] = status;
+      },
+      removeWorktree: async (id) => {
+        log.orcaRemovals.push(id);
+        if (removeWorktreeError) throw removeWorktreeError;
       }
     },
     notify: async (title, body) => void log.notices.push({ title, body }),
@@ -532,4 +537,60 @@ test('card: O to a status whose list holds the current column writes nothing but
   assert.equal(s.log.moves.length, 0);
   assert.equal(stored(s.store, 'wt-1').sync.orca, 'todo');
   assert.equal(stored(s.store, 'wt-1').sync.bc, '12');
+});
+
+
+test('removeOnComplete: true removes the worktree when Orca status is completed and Basecamp completes', async () => {
+  const config = { enabled: true, conflictRule: 'orca-wins', removeOnComplete: true, statusToColumn: {} };
+  const s = setup({
+    config,
+    links: { 'wt-1': { ...todo(1), v: 2, sync: sync('in-progress', 'open') } },
+    orcaStatuses: { 'wt-1': 'completed' },
+    bc: { 1: 'open' }
+  });
+  const result = await s.sync.tick();
+  assert.equal(result.synced, 1);
+  assert.deepEqual(s.log.completes, [{ type: 'todo', id: 1, projectId: 7 }]);
+  assert.deepEqual(s.log.orcaRemovals, ['wt-1']);
+});
+
+test('removeOnComplete: true removes the worktree when Basecamp is completed and Orca sets completed', async () => {
+  const config = { enabled: true, conflictRule: 'orca-wins', removeOnComplete: true, statusToColumn: {} };
+  const s = setup({
+    config,
+    links: { 'wt-1': { ...todo(1), v: 2, sync: sync('in-progress', 'open') } },
+    orcaStatuses: { 'wt-1': 'in-progress' },
+    bc: { 1: 'completed' }
+  });
+  const result = await s.sync.tick();
+  assert.equal(result.synced, 1);
+  assert.deepEqual(s.log.orcaSets, [['wt-1', 'completed']]);
+  assert.deepEqual(s.log.orcaRemovals, ['wt-1']);
+});
+
+test('removeOnComplete: false does not remove worktree even when completed', async () => {
+  const config = { enabled: true, conflictRule: 'orca-wins', removeOnComplete: false, statusToColumn: {} };
+  const s = setup({
+    config,
+    links: { 'wt-1': { ...todo(1), v: 2, sync: sync('in-progress', 'open') } },
+    orcaStatuses: { 'wt-1': 'completed' },
+    bc: { 1: 'open' }
+  });
+  await s.sync.tick();
+  assert.deepEqual(s.log.orcaRemovals, []);
+});
+
+test('removeOnComplete: true removal failure is counted as failed and notified', async () => {
+  const config = { enabled: true, conflictRule: 'orca-wins', removeOnComplete: true, statusToColumn: {} };
+  const s = setup({
+    config,
+    links: { 'wt-1': { ...todo(1), v: 2, sync: sync('in-progress', 'open') } },
+    orcaStatuses: { 'wt-1': 'completed' },
+    bc: { 1: 'open' },
+    removeWorktreeError: new Error('worktree is locked')
+  });
+  const result = await s.sync.tick();
+  assert.equal(result.failed, 1);
+  assert.equal(s.log.notices.length, 1);
+  assert.match(s.log.notices[0].body, /worktree is locked/);
 });

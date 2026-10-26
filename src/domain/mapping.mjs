@@ -9,13 +9,18 @@ export const MAX_COLUMNS_PER_STATUS = 20;
 /** `completed` is fixed (to-do complete / card Done), so it can never be a mapping key. */
 const RESERVED_STATUS = 'completed';
 
-export const DEFAULT_SYNC_CONFIG = Object.freeze({ enabled: true, conflictRule: 'orca-wins', statusToColumn: Object.freeze({}) });
+export const DEFAULT_SYNC_CONFIG = Object.freeze({
+  enabled: true,
+  conflictRule: 'orca-wins',
+  removeOnComplete: false,
+  statusToColumn: Object.freeze({})
+});
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 /** All-digit keys are rejected: JS orders integer-like keys first, which would break "first mapped status wins". */
 const validStatus = (s) => STATUS_PATTERN.test(s) && s !== RESERVED_STATUS && !NUMERIC_ID.test(s);
 
-const defaults = () => ({ enabled: true, conflictRule: 'orca-wins', statusToColumn: {} });
+const defaults = () => ({ enabled: true, conflictRule: 'orca-wins', removeOnComplete: false, statusToColumn: {} });
 
 /**
  * Clean list of column ids for one status: a legacy single id string becomes a one-element list.
@@ -64,10 +69,21 @@ export function validateSyncConfig(body) {
   if (!isObject(body)) return { ok: false, error: 'The body must be an object' };
   if (typeof body.enabled !== 'boolean') return { ok: false, error: 'enabled must be a boolean' };
   if (!CONFLICT_RULES.includes(body.conflictRule)) return { ok: false, error: 'conflictRule must be orca-wins or basecamp-wins' };
+  if (body.removeOnComplete !== undefined && typeof body.removeOnComplete !== 'boolean') {
+    return { ok: false, error: 'removeOnComplete must be a boolean' };
+  }
   if (!isObject(body.statusToColumn)) return { ok: false, error: 'statusToColumn must be an object' };
   const map = cleanMap(body.statusToColumn, false);
   if (map.error) return { ok: false, error: map.error };
-  return { ok: true, value: { enabled: body.enabled, conflictRule: body.conflictRule, statusToColumn: map.value } };
+  return {
+    ok: true,
+    value: {
+      enabled: body.enabled,
+      conflictRule: body.conflictRule,
+      removeOnComplete: body.removeOnComplete === true,
+      statusToColumn: map.value
+    }
+  };
 }
 
 /** Lenient read of a stored value: never throws, falls back to the defaults field by field. */
@@ -76,6 +92,7 @@ export function normalizeSyncConfig(stored) {
   if (!isObject(stored)) return out;
   if (typeof stored.enabled === 'boolean') out.enabled = stored.enabled;
   if (CONFLICT_RULES.includes(stored.conflictRule)) out.conflictRule = stored.conflictRule;
+  if (typeof stored.removeOnComplete === 'boolean') out.removeOnComplete = stored.removeOnComplete;
   if (isObject(stored.statusToColumn)) out.statusToColumn = cleanMap(stored.statusToColumn, true).value;
   return out;
 }

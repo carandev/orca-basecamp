@@ -67,6 +67,12 @@ export function createOrcaAdapter({ orcaCli, readContext }) {
       await orcaCli(['worktree', 'set', '--worktree', `id:${worktreeId}`, '--workspace-status', status], { timeoutMs });
     },
 
+    /** Removes a worktree from Orca and git. */
+    async removeWorktree(worktreeId, { timeoutMs = SET_TIMEOUT_MS } = {}) {
+      if (typeof worktreeId !== 'string' || !worktreeId || CONTROL_CHARS.test(worktreeId)) throw new Error('Invalid worktree id');
+      await orcaCli(['worktree', 'rm', '--worktree', `id:${worktreeId}`], { timeoutMs });
+    },
+
     async openTab({ worktreeId, url }) {
       await orcaCli(['tab', 'create', '--worktree', `id:${worktreeId}`, '--url', url]);
     },

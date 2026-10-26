@@ -366,7 +366,7 @@ const postTo = (port, path, body, headers = {}) =>
     headers: { 'X-Token': TOKEN, 'Content-Type': 'application/json', ...headers },
     body: typeof body === 'string' ? body : JSON.stringify(body)
   });
-const CONFIG = { enabled: true, conflictRule: 'basecamp-wins', statusToColumn: { 7: { 'in-review': ['9'] } } };
+const CONFIG = { enabled: true, conflictRule: 'basecamp-wins', removeOnComplete: false, statusToColumn: { 7: { 'in-review': ['9'] } } };
 
 test('GET /api/columns returns the columns of a numeric project, no-store', async () => {
   const { port, s } = await start();
@@ -399,7 +399,7 @@ test('GET /api/sync-config returns the defaults when nothing is stored', async (
   const { port } = await start();
   const r = await get(port, '/api/sync-config');
   assert.equal(r.status, 200);
-  assert.deepEqual(json(r).config, { enabled: true, conflictRule: 'orca-wins', statusToColumn: {} });
+  assert.deepEqual(json(r).config, { enabled: true, conflictRule: 'orca-wins', removeOnComplete: false, statusToColumn: {} });
 });
 
 test('POST /api/sync-config stores the config, returns it and calls onConfigSaved', async () => {

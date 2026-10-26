@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { validateSyncConfig, normalizeSyncConfig, DEFAULT_SYNC_CONFIG } from '../../src/domain/mapping.mjs';
 
-const valid = { enabled: true, conflictRule: 'orca-wins', statusToColumn: { 7: { 'in-review': ['9'], 'in-progress': ['8'] } } };
+const valid = { enabled: true, conflictRule: 'orca-wins', removeOnComplete: false, statusToColumn: { 7: { 'in-review': ['9'], 'in-progress': ['8'] } } };
 
 test('defaults: enabled, orca-wins, empty map', () => {
-  assert.deepEqual(normalizeSyncConfig(undefined), { enabled: true, conflictRule: 'orca-wins', statusToColumn: {} });
-  assert.deepEqual(DEFAULT_SYNC_CONFIG, { enabled: true, conflictRule: 'orca-wins', statusToColumn: {} });
+  assert.deepEqual(normalizeSyncConfig(undefined), { enabled: true, conflictRule: 'orca-wins', removeOnComplete: false, statusToColumn: {} });
+  assert.deepEqual(DEFAULT_SYNC_CONFIG, { enabled: true, conflictRule: 'orca-wins', removeOnComplete: false, statusToColumn: {} });
 });
 
 test('defaults are not shared between calls', () => {
@@ -17,13 +17,13 @@ test('defaults are not shared between calls', () => {
 
 test('normalize keeps a valid stored config and applies defaults per field', () => {
   assert.deepEqual(normalizeSyncConfig(valid), valid);
-  assert.deepEqual(normalizeSyncConfig({ enabled: false }), { enabled: false, conflictRule: 'orca-wins', statusToColumn: {} });
+  assert.deepEqual(normalizeSyncConfig({ enabled: false }), { enabled: false, conflictRule: 'orca-wins', removeOnComplete: false, statusToColumn: {} });
   assert.equal(normalizeSyncConfig({ conflictRule: 'basecamp-wins' }).conflictRule, 'basecamp-wins');
 });
 
 test('normalize never throws and drops invalid parts', () => {
   for (const bad of [42, 'x', [], () => 1, { enabled: 'yes', conflictRule: 'newest-wins', statusToColumn: 5 }]) {
-    assert.deepEqual(normalizeSyncConfig(bad), { enabled: true, conflictRule: 'orca-wins', statusToColumn: {} });
+    assert.deepEqual(normalizeSyncConfig(bad), { enabled: true, conflictRule: 'orca-wins', removeOnComplete: false, statusToColumn: {} });
   }
   const mixed = normalizeSyncConfig({
     statusToColumn: { 7: { 'in-review': '9', '--read': '1', completed: '3', ok: 'abc' }, abc: { a: '1' } }
@@ -95,6 +95,13 @@ test('validate enforces 50 projects and 30 statuses', () => {
 
 test('validate drops unknown top-level keys', () => {
   assert.deepEqual(validateSyncConfig({ ...valid, extra: 1 }).value, valid);
+});
+
+test('validate and normalize handle removeOnComplete', () => {
+  assert.equal(validateSyncConfig({ ...valid, removeOnComplete: true }).value.removeOnComplete, true);
+  assert.equal(validateSyncConfig({ ...valid, removeOnComplete: 'true' }).ok, false);
+  assert.equal(normalizeSyncConfig({ removeOnComplete: true }).removeOnComplete, true);
+  assert.equal(normalizeSyncConfig({ removeOnComplete: 'yes' }).removeOnComplete, false);
 });
 
 // ---- several columns per status ----

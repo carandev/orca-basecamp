@@ -81,6 +81,10 @@ export function createSyncLinks({ storage, source, orca, notify, clock, concurre
       failing.delete(worktreeId);
       if (plan.writeBc !== undefined || plan.writeOrca !== undefined) summary.synced += 1;
       if (plan.conflict) summary.conflictItems.push({ title: link.title, ...plan.conflict });
+      if (config.removeOnComplete && plan.baseline.orca === 'completed' && plan.baseline.bc === 'completed' && typeof orca.removeWorktree === 'function') {
+        const stillLinked = await storage.get(linkKey(worktreeId));
+        if (stillLinked) await orca.removeWorktree(worktreeId);
+      }
     } catch (error) {
       summary.failed += 1;
       if (isFatal(error)) {

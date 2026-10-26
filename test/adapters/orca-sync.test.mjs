@@ -98,3 +98,31 @@ test('setStatus throws before any spawn on an invalid status or worktree id', as
 test('setStatus propagates CLI failures', async () => {
   await assert.rejects(adapter(fakeCli(new Error('orca down'))).setStatus('r::/w', 'todo'), /orca down/);
 });
+
+// ---- removeWorktree --------------------------------------------------------
+
+test('removeWorktree runs worktree rm with the exact argv and a 10 s timeout', async () => {
+  const cli = fakeCli({});
+  await adapter(cli).removeWorktree('r::/w');
+  assert.deepEqual(cli.calls, [
+    { args: ['worktree', 'rm', '--worktree', 'id:r::/w'], options: { timeoutMs: 10_000 } }
+  ]);
+});
+
+test('removeWorktree accepts a per-call timeout override', async () => {
+  const cli = fakeCli({});
+  await adapter(cli).removeWorktree('r::/w', { timeoutMs: 4_000 });
+  assert.equal(cli.calls[0].options.timeoutMs, 4_000);
+});
+
+test('removeWorktree throws before any spawn on an invalid worktree id', async () => {
+  for (const id of ['', 5, 'r::/w\nx', undefined, null]) {
+    const cli = fakeCli({});
+    await assert.rejects(adapter(cli).removeWorktree(id), /invalid/i);
+    assert.equal(cli.calls.length, 0);
+  }
+});
+
+test('removeWorktree propagates CLI failures', async () => {
+  await assert.rejects(adapter(fakeCli(new Error('orca rm failed'))).removeWorktree('r::/w'), /orca rm failed/);
+});

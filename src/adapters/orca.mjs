@@ -27,9 +27,10 @@ export function createOrcaAdapter({ orcaCli, readContext }) {
      * The CLI prints `{worktree}`; with `--agent` it prints `{worktree?, lineage, launch: {worktreeId}}`,
      * where `worktree` is absent if the follow-up show failed (Orca cli/handlers/worktree.js).
      */
-    async createWorktree({ repoId, name, comment, agent, prompt }) {
+    async createWorktree({ repoId, name, comment, agent, prompt, baseBranch }) {
       const args = ['worktree', 'create', '--repo', `id:${repoId}`, '--name', name, '--comment', comment];
       if (agent) args.push('--agent', agent, '--prompt', prompt ?? '');
+      if (baseBranch) args.push('--base-branch', baseBranch);
       const result = (await orcaCli(args)) ?? {};
       return {
         worktreeId: result.worktree?.id ?? result.launch?.worktreeId ?? result.id,

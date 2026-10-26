@@ -281,7 +281,7 @@ test('a SourceError becomes a 502 carrying error, hint and retryable (not retrie
 
 test('start refetches the item and ignores client title, prompt and comment', async () => {
   const { port, s } = await start();
-  const r = await post(port, { ...VALID, agent: 'claude', title: 'EVIL', prompt: 'rm -rf', comment: 'EVIL', name: 'EVIL' });
+  const r = await post(port, { ...VALID, agent: 'claude', title: 'EVIL', prompt: 'rm -rf', comment: 'EVIL' });
   assert.equal(r.status, 200);
   assert.deepEqual(json(r), { ok: true, status: 'linked', worktreeId: 'r1::/w/x', name: 'bc-1-real-title' });
   assert.deepEqual(s.sourceCalls[0], ['get', { type: 'todo', id: '1', projectId: '7' }]);
@@ -292,6 +292,32 @@ test('start refetches the item and ignores client title, prompt and comment', as
   assert.ok(created.prompt.includes('Real description'));
   assert.ok(!JSON.stringify(created).includes('EVIL'));
   assert.ok(s.links.has('link:r1::/w/x'));
+});
+
+
+test('start forwards custom name and baseBranch when valid', async () => {
+  const { port, s } = await start();
+  const r = await post(port, { ...VALID, name: 'custom-feature', baseBranch: 'develop' });
+  assert.equal(r.status, 200);
+  assert.deepEqual(json(r), { ok: true, status: 'linked', worktreeId: 'r1::/w/x', name: 'custom-feature' });
+  const [, created] = s.orcaCalls.find(([n]) => n === 'createWorktree');
+  assert.equal(created.name, 'custom-feature');
+  assert.equal(created.baseBranch, 'develop');
+});
+
+test('bad name or baseBranch are 400 and create nothing', async () => {
+  const { port, s } = await start();
+  const bad = [
+    { ...VALID, name: 'bad name with spaces' },
+    { ...VALID, name: '-starts-with-dash' },
+    { ...VALID, baseBranch: 'bad branch space' },
+    { ...VALID, baseBranch: ';rm -rf' }
+  ];
+  for (const body of bad) {
+    const r = await post(port, body);
+    assert.equal(r.status, 400, JSON.stringify(body));
+  }
+  assert.equal(s.orcaCalls.filter(([n]) => n === 'createWorktree').length, 0);
 });
 
 test('missing or unknown repoId, bad agent and bad ids are 400 and create nothing', async () => {

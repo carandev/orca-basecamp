@@ -1,6 +1,6 @@
-const MAX_SLUG = 40;
+const MAX_SLUG = 20;
 
-/** NFKD fold, strip combining marks, lowercase, non `[a-z0-9]` runs to `-`, trim, cap at 40, trim trailing `-`. */
+/** NFKD fold, strip combining marks, lowercase, non `[a-z0-9]` runs to `-`, trim, cap at 20, trim trailing `-`. */
 export function slugify(title) {
   if (typeof title !== 'string') return '';
   return title

@@ -21,6 +21,8 @@
   .banner { border: 1px solid var(--border); border-left-width: 4px; background: var(--panel); padding: 8px 12px; border-radius: 6px; margin: 8px 0; white-space: pre-wrap; word-break: break-word; }
   .banner.error { border-left-color: var(--danger); } .banner.ok { border-left-color: var(--ok); } .banner.info { border-left-color: var(--accent); }
   .item { display: flex; gap: 8px; align-items: center; justify-content: space-between; border: 1px solid var(--border); background: var(--panel); border-radius: 6px; padding: 8px; margin-top: 6px; }
+  .item-actions { display: flex; gap: 6px; align-items: center; flex: 0 0 auto; }
+  .name-input { width: 200px; font-size: 13px; font-family: monospace; }
   .item span.meta { color: var(--muted); font-size: 12px; display: block; }
   .check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); font-size: 14px; flex: 0 0 auto; }
   .grid { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(160px, 2fr); gap: 6px 12px; align-items: center; margin: 8px 0; }
@@ -43,6 +45,7 @@
   <div id="picker">
     <div class="row">
       <label id="repo-wrap">Repository (required)<select id="repo"></select></label>
+      <label id="base-branch-wrap">Base branch (optional)<input type="text" id="base-branch" placeholder="main" spellcheck="false" maxlength="100"></label>
       <label id="agent-wrap">Agent (optional)<input type="text" id="agent" placeholder="claude" spellcheck="false" maxlength="40"></label>
       <label class="check"><input type="checkbox" id="mine" checked> Only mine</label>
     </div>
@@ -349,6 +352,7 @@
   if (linkMode) {
     $('repo-wrap').hidden = true;
     $('agent-wrap').hidden = true;
+    $('base-branch-wrap').hidden = true;
     $('tab-sync').hidden = true;
     $('title').textContent = 'Link to: ';
     api('GET', '/api/link-session?session=' + encodeURIComponent(session)).then(function (j) {

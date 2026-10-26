@@ -32,6 +32,16 @@ test('listRepos maps id, displayName and path', async () => {
   assert.deepEqual(cli.calls, [['repo', 'list']]);
 });
 
+
+test('createWorktree includes --base-branch when provided', async () => {
+  const cli = fakeCli({ 'worktree create': { worktree: { id: 'wt-b', path: '/w/b' } } });
+  const out = await adapter(cli).createWorktree({ repoId: 'r1', name: 'bc-b', comment: 'c', baseBranch: 'develop' });
+  assert.deepEqual(cli.calls[0], [
+    'worktree', 'create', '--repo', 'id:r1', '--name', 'bc-b', '--comment', 'c', '--base-branch', 'develop'
+  ]);
+  assert.deepEqual(out, { worktreeId: 'wt-b', path: '/w/b' });
+});
+
 test('createWorktree passes repo, name and comment as separate argv entries', async () => {
   const cli = fakeCli({ 'worktree create': { worktree: { id: 'wt-1', path: '/w/bc-1' } } });
   const out = await adapter(cli).createWorktree({ repoId: 'r1', name: 'bc-1-x', comment: 'T https://app.basecamp.com/1' });

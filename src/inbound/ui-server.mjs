@@ -13,6 +13,7 @@ const CSP = [
 
 const NUMERIC = /^\d+$/;
 const AGENT = /^[\w.-]{1,40}$/;
+const REF_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,99}$/;
 const KINDS = ['todo', 'card'];
 const LINK_SESSION_TTL_MS = 15 * 60_000;
 
@@ -198,6 +199,12 @@ export function createUiServer({
       return fail(res, 400, 'agent must match [A-Za-z0-9_.-]{1,40}');
     }
     if (typeof body.repoId !== 'string' || !body.repoId) return fail(res, 400, 'A repository is required');
+    if (body.name !== undefined && !(typeof body.name === 'string' && REF_PATTERN.test(body.name.trim()))) {
+      return fail(res, 400, 'name must match [A-Za-z0-9][A-Za-z0-9._/-]{0,99}');
+    }
+    if (body.baseBranch !== undefined && !(typeof body.baseBranch === 'string' && REF_PATTERN.test(body.baseBranch.trim()))) {
+      return fail(res, 400, 'baseBranch must match [A-Za-z0-9][A-Za-z0-9._/-]{0,99}');
+    }
     let repos;
     try {
       repos = await orca.listRepos();
@@ -207,7 +214,9 @@ export function createUiServer({
     if (!repos.some((r) => r.id === body.repoId)) return fail(res, 400, 'Unknown repository');
 
     // Only ids go on: the title, description and prompt come from the source, never from the page.
-    const result = await startFromItem({ type: body.type, id, projectId, repoId: body.repoId, agent: body.agent });
+    const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : undefined;
+    const baseBranch = typeof body.baseBranch === 'string' && body.baseBranch.trim() ? body.baseBranch.trim() : undefined;
+    const result = await startFromItem({ type: body.type, id, projectId, repoId: body.repoId, agent: body.agent, name, baseBranch });
     if (result.status === 'linked') return send(res, 200, { ok: true, status: 'linked', worktreeId: result.worktreeId, name: result.name });
     if (result.status === 'unlinked') return send(res, 200, { ok: true, status: 'unlinked', name: result.name });
     if (result.status === 'in_flight') return fail(res, 409, 'This item is already being started');

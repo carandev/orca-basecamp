@@ -20,7 +20,7 @@ const MIN_SET_BUDGET_MS = 2_000;
 export function createStartFromItem({ source, orca, storage, notify, clock, loadSyncConfig }) {
   const inFlight = new Set();
 
-  return async function startFromItem({ type, id, projectId, repoId, agent }) {
+  return async function startFromItem({ type, id, projectId, repoId, agent, name: requestedName, baseBranch }) {
     const key = `${type}:${id}`;
     if (inFlight.has(key)) return { status: 'in_flight' };
     inFlight.add(key);
@@ -34,7 +34,7 @@ export function createStartFromItem({ source, orca, storage, notify, clock, load
         return { status: 'failed', error: error.message, hint: error.hint };
       }
 
-      const name = worktreeName(item.id, item.title);
+      const name = typeof requestedName === 'string' && requestedName.trim() ? requestedName.trim() : worktreeName(item.id, item.title);
       let created;
       try {
         created = await orca.createWorktree({
@@ -42,7 +42,8 @@ export function createStartFromItem({ source, orca, storage, notify, clock, load
           name,
           comment: `${item.title} ${item.appUrl}`,
           agent,
-          prompt: buildPrompt(item.title, item.description)
+          prompt: buildPrompt(item.title, item.description),
+          ...(baseBranch ? { baseBranch } : {})
         });
       } catch (error) {
         await safeNotify(notify, `${TITLE} failed`, describeFailure(error));

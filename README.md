@@ -1,55 +1,81 @@
 # orca-basecamp
 
-Orca plugin that connects Basecamp to-dos and cards to Orca worktrees. It automatically syncs status in both directions and completes the item when the worktree is removed.
+Orca plugin that links Basecamp to-dos and cards to Orca worktrees. It keeps statuses in sync in both directions and completes the Basecamp item automatically when the worktree is removed.
 
-Basecamp communication runs exclusively through the local `basecamp` CLI (`--json`).
+## Requirements
 
-## Quick Start
+- [Orca](https://orca.so) >= 1.4.0
+- Node >= 22
+- [Basecamp CLI](https://github.com/Gentleman-Programming/basecamp-cli) — installed and authenticated
 
-1. **Install plugin**: In Orca, go to **Settings -> Plugins -> Install plugin -> Git URL**, enter this repo's URL (e.g. `#v0.2.0`) and approve permissions.
-2. **Verify CLI**: Run **Basecamp: Diagnose** from the command palette.
-3. **Start working**: Run **Basecamp: Start from item**, choose a repository and an item, and click **Start**.
+## Installation
 
-*Requires Orca >= 1.4.0 and Node >= 22.*
+1. Open Orca and go to **Settings → Plugins → Install plugin → Git URL**.
+2. Enter this repository's URL (e.g. `https://github.com/your-org/orca-basecamp#v0.2.0`).
+3. Approve the requested permissions.
+4. Open the command palette and run **Basecamp: Diagnose** to confirm the CLI is found and authenticated.
 
-## Commands
+### If the Basecamp CLI is not in your PATH
 
-| Command | Action |
-|---------|--------|
-| **Basecamp: Diagnose** | Checks that `basecamp` CLI is installed and authenticated. |
-| **Basecamp: Start from item** | Opens the picker (To-dos / Cards / Sync). Lets you customize worktree name and base branch, then creates and links the worktree. |
-| **Basecamp: Link item to this worktree** | Links the currently open worktree to an existing Basecamp item without creating anything new. |
-| **Basecamp: Open linked item** | Opens the linked to-do or card in an Orca tab (or default browser). |
-| **Basecamp: Complete linked item** | Marks the linked item as completed in Basecamp. |
-| **Basecamp: Sync now** | Forces an immediate bidirectional status sync pass. |
+Create a `config.json` file in the platform config directory:
 
-## Status Sync
-
-Sync runs automatically once a minute (and on demand with **Basecamp: Sync now**):
-
-- **Completed**: Marking a worktree completed marks the to-do complete or moves the card to *Done*.
-- **In Progress / Custom**: Worktree statuses map to corresponding card columns configured in the **Sync** tab.
-- **Removal**: Deleting a linked worktree automatically completes its Basecamp item and cleans up the link.
-
-## Configuration (Optional)
-
-Create `config.json` if the CLI is not in your global `PATH`:
-- Windows: `%APPDATA%\orca-basecamp\config.json`
-- macOS/Linux: `~/.config/orca-basecamp/config.json`
+- **Windows:** `%APPDATA%\orca-basecamp\config.json`
+- **macOS / Linux:** `~/.config/orca-basecamp/config.json`
 
 ```json
 {
-  "basecampBin": "C:\\path\\to\\basecamp.exe",
+  "basecampBin": "/absolute/path/to/basecamp",
   "basecampEnv": {
     "BASECAMP_PROFILE": "work"
   }
 }
 ```
 
-Accepted environment variables: `BASECAMP_PROFILE`, `BASECAMP_ACCOUNT_ID`, `BASECAMP_NO_KEYRING`.
+`basecampBin` points to the CLI executable. `basecampEnv` sets extra environment variables passed on every CLI call. Supported variables: `BASECAMP_PROFILE`, `BASECAMP_ACCOUNT_ID`, `BASECAMP_NO_KEYRING`.
 
-## Development
+---
 
-```bash
-npm test
-```
+## Commands
+
+### Basecamp: Start from item
+Opens the picker. Choose a **repository**, pick a **to-do or card**, and click **Start**. The plugin creates a new Orca worktree, links it to that item, and opens it.
+
+- **Repository** — the Orca-managed git repo where the worktree will be created.
+- **Base branch** *(optional)* — branch the new worktree starts from. Defaults to the repo's default branch.
+- **Agent** *(optional)* — an Orca agent to attach to the new worktree (e.g. `claude`).
+- **Only mine** — filters to-dos and cards assigned to you. Uncheck to see all items in a project.
+- Items already linked to a worktree show a **Linked to worktree** badge and cannot be started again.
+
+### Basecamp: Link item to this worktree
+Links the **currently open** worktree to a Basecamp item without creating anything new. Useful when you already started work in a worktree and want to attach it to an existing to-do or card.
+
+### Basecamp: Open linked item
+Opens the Basecamp to-do or card linked to the current worktree in an Orca browser tab (or your default browser as fallback).
+
+### Basecamp: Complete linked item
+Marks the linked Basecamp item as completed from inside Orca, without leaving your worktree.
+
+### Basecamp: Sync now
+Forces an immediate bidirectional status sync between Orca and Basecamp. Sync otherwise runs automatically every minute while a worktree is open.
+
+### Basecamp: Diagnose
+Checks that the `basecamp` CLI is installed, reachable, and authenticated. Run this first if something is not working.
+
+---
+
+## Status Sync
+
+The **Sync** tab (in the picker) controls how Orca workspace statuses map to Basecamp card columns.
+
+| Setting | What it does |
+|---------|--------------|
+| **Sync statuses** | Enables/disables automatic bidirectional sync. |
+| **Remove worktree when done** | Automatically removes the Orca worktree when the linked item is completed on either side. |
+| **When both sides changed** | Conflict resolution rule: **Orca wins** or **Basecamp wins**. |
+| **Column mapping (per project)** | Maps each Orca status (`todo`, `in-progress`, `in-review`, or a custom one) to one or more Basecamp card columns. The first column in the list is the destination when moving a card. |
+
+**Built-in status rules:**
+
+- Moving a worktree to **completed** marks the to-do done or moves the card to *Done* in Basecamp.
+- Completing a to-do or moving a card to *Done* in Basecamp sets the Orca status to **completed**.
+- **Removing** a linked worktree automatically completes its Basecamp item and cleans up the link.

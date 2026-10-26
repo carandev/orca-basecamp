@@ -31,7 +31,8 @@ function numericId(value) {
 /**
  * Localhost-only picker server. It trusts nothing from the page except ids: `/api/start` carries
  * `{type, id, projectId, repoId, agent?}` and the item itself is refetched by `startFromItem`.
- * Ports: source {list, projects} (the basecamp CLI), orca {listRepos}, startFromItem(request) -> status object.
+ * Ports: source {list, projects, columns} (the basecamp CLI), orca {listRepos}, startFromItem(request) -> status object,
+ * syncConfig {get, save} (the stored sync settings) and onConfigSaved() (called after a successful save).
  * `html` is the page body (a string, or a function returning it, possibly async). `token` defaults to a fresh
  * random value. Shuts itself down after `idleMs` without requests.
  * Returns { start() -> { url, port, token } (reuses a running server), stop(), isRunning() }.
@@ -40,6 +41,8 @@ export function createUiServer({
   source,
   orca,
   startFromItem,
+  syncConfig,
+  onConfigSaved = () => {},
   html,
   token = randomBytes(24).toString('hex'),
   idleMs = 15 * 60_000,
@@ -108,20 +111,49 @@ export function createUiServer({
     }
   }
 
-  async function start_(req, res, origins) {
+  async function columns(res, url) {
+    const projectId = numericId(url.searchParams.get('projectId'));
+    if (projectId === null) return fail(res, 400, 'projectId must be a numeric id');
+    try {
+      return send(res, 200, { ok: true, columns: await source.columns({ projectId }) });
+    } catch (error) {
+      return portFailure(res, error);
+    }
+  }
+
+  /** Shared POST checks (Origin, Content-Type, size, JSON object). Sends the failure and returns null, or returns the body. */
+  async function postedObject(req, res, origins) {
     const origin = req.headers.origin;
-    if (origin !== undefined && !origins.some((o) => origin === `http://${o}`)) return fail(res, 403, 'Bad Origin');
+    if (origin !== undefined && !origins.some((o) => origin === `http://${o}`)) return void fail(res, 403, 'Bad Origin');
     if (!String(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) {
-      return fail(res, 415, 'Content-Type must be application/json');
+      return void fail(res, 415, 'Content-Type must be application/json');
     }
     let body;
     try {
       body = JSON.parse(await readBody(req));
     } catch (e) {
-      if (e.status) return fail(res, e.status, e.message);
-      return fail(res, 400, `Invalid JSON: ${e.message}`);
+      return void (e.status ? fail(res, e.status, e.message) : fail(res, 400, `Invalid JSON: ${e.message}`));
     }
-    if (body === null || typeof body !== 'object' || Array.isArray(body)) return fail(res, 400, 'Expected a JSON object');
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) return void fail(res, 400, 'Expected a JSON object');
+    return body;
+  }
+
+  async function saveSyncConfig(req, res, origins) {
+    const body = await postedObject(req, res, origins);
+    if (!body) return;
+    try {
+      const saved = await syncConfig.save(body);
+      if (!saved.ok) return fail(res, 400, saved.error);
+      onConfigSaved();
+      return send(res, 200, { ok: true, config: saved.value });
+    } catch (error) {
+      return portFailure(res, error);
+    }
+  }
+
+  async function start_(req, res, origins) {
+    const body = await postedObject(req, res, origins);
+    if (!body) return;
     const id = numericId(body.id);
     const projectId = numericId(body.projectId);
     if (!KINDS.includes(body.type)) return fail(res, 400, 'type must be "todo" or "card"');
@@ -158,13 +190,29 @@ export function createUiServer({
       if (page == null) return fail(res, 500, 'Picker page is missing');
       return send(res, 200, page, 'text/html; charset=utf-8', { 'Content-Security-Policy': CSP, 'Referrer-Policy': 'no-referrer' });
     }
-    const allowed = { '/api/repos': 'GET', '/api/projects': 'GET', '/api/items': 'GET', '/api/start': 'POST' }[url.pathname];
+    const allowed = {
+      '/api/repos': 'GET',
+      '/api/projects': 'GET',
+      '/api/items': 'GET',
+      '/api/columns': 'GET',
+      '/api/sync-config': ['GET', 'POST'],
+      '/api/start': 'POST'
+    }[url.pathname];
     if (!allowed) return fail(res, 404, 'Not found');
-    if (req.method !== allowed) return fail(res, 405, 'Method not allowed');
+    if (![allowed].flat().includes(req.method)) return fail(res, 405, 'Method not allowed');
     if (!tokenMatches(req.headers['x-token'], token)) return fail(res, 403, 'Invalid token');
 
     if (url.pathname === '/api/start') return start_(req, res, origins);
     if (url.pathname === '/api/items') return items(res, url);
+    if (url.pathname === '/api/columns') return columns(res, url);
+    if (url.pathname === '/api/sync-config') {
+      if (req.method === 'POST') return saveSyncConfig(req, res, origins);
+      try {
+        return send(res, 200, { ok: true, config: await syncConfig.get() });
+      } catch (error) {
+        return portFailure(res, error);
+      }
+    }
     try {
       if (url.pathname === '/api/repos') return send(res, 200, { ok: true, repos: await orca.listRepos() });
       return send(res, 200, { ok: true, projects: await source.projects() });

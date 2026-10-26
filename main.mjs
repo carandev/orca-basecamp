@@ -30,11 +30,13 @@ const defaultDeps = {
   configFile: configFilePath(),
   clock: { now: () => Date.now() },
   timers: { setInterval, clearInterval, setTimeout, clearTimeout },
-  createServer: ({ source, orca, startFromItem }) =>
+  createServer: ({ source, orca, startFromItem, syncConfig, onConfigSaved }) =>
     createUiServer({
       source,
       orca,
       startFromItem,
+      syncConfig,
+      onConfigSaved,
       html: () => fs.readFile(fileURLToPath(new URL('./src/inbound/ui/index.html', import.meta.url)))
     })
 };
@@ -117,7 +119,13 @@ export default function activate(orca, overrides = {}) {
   orca.commands.register(
     'start',
     guard('start', async () => {
-      server ??= deps.createServer({ source, orca: orcaPort, startFromItem });
+      server ??= deps.createServer({
+        source,
+        orca: orcaPort,
+        startFromItem,
+        syncConfig,
+        onConfigSaved: () => poller.ensureStarted()
+      });
       await openPicker({ server, orca: orcaPort, openExternal: deps.openExternal, notify, log });
     })
   );

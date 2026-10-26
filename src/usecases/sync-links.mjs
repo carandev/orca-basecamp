@@ -32,7 +32,7 @@ export function createSyncLinks({ storage, source, orca, notify, clock, concurre
     const links = [];
     for (const key of keys.filter((k) => k.startsWith(LINK_PREFIX))) {
       const link = parseLink(await storage.get(key));
-      if (link && link.type === 'todo') links.push({ worktreeId: key.slice(LINK_PREFIX.length), link });
+      if (link) links.push({ worktreeId: key.slice(LINK_PREFIX.length), link });
     }
     return links;
   }
@@ -44,11 +44,17 @@ export function createSyncLinks({ storage, source, orca, notify, clock, concurre
     await storage.set(linkKey(worktreeId), withSync(current, { ...baseline, at: clock.now() }));
   }
 
+  /** Maps a target value to the CLI operation: done, reopen (to-do) or move (card, numeric column id). */
+  function writeBasecamp(link, ref, target) {
+    if (target === 'completed') return source.complete(ref);
+    if (link.type === 'todo') return source.reopen({ id: link.id, projectId: link.projectId });
+    return source.move({ id: link.id, projectId: link.projectId, columnId: target });
+  }
+
   async function write(link, plan, worktreeId) {
     const ref = { type: link.type, id: link.id, projectId: link.projectId };
     if (plan.writeBc !== undefined) {
-      const outcome =
-        plan.writeBc === 'completed' ? await source.complete(ref) : await source.reopen({ id: link.id, projectId: link.projectId });
+      const outcome = await writeBasecamp(link, ref, plan.writeBc);
       if (outcome.status === 'inaccessible') {
         throw Object.assign(new Error(`"${link.title}" is not accessible in Basecamp`), { code: 'inaccessible' });
       }

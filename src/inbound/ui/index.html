@@ -21,6 +21,9 @@
   .banner.error { border-left-color: var(--danger); } .banner.ok { border-left-color: var(--ok); } .banner.info { border-left-color: var(--accent); }
   .item { display: flex; gap: 8px; align-items: center; justify-content: space-between; border: 1px solid var(--border); background: var(--panel); border-radius: 6px; padding: 8px; margin-top: 6px; }
   .item span.meta { color: var(--muted); font-size: 12px; display: block; }
+  .check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); font-size: 14px; flex: 0 0 auto; }
+  .grid { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(160px, 2fr); gap: 6px 12px; align-items: center; margin: 8px 0; }
+  .grid .fixed { color: var(--muted); }
 </style>
 </head>
 <body>
@@ -30,13 +33,36 @@
   <div class="row">
     <button type="button" id="tab-todo" class="on">To-dos</button>
     <button type="button" id="tab-card">Cards</button>
+    <button type="button" id="tab-sync">Sync</button>
     <label id="project-wrap" hidden>Project (cards)<select id="project"></select></label>
   </div>
-  <div class="row">
-    <label>Repository (required)<select id="repo"></select></label>
-    <label>Agent (optional)<input type="text" id="agent" placeholder="claude" spellcheck="false" maxlength="40"></label>
+  <div id="picker">
+    <div class="row">
+      <label>Repository (required)<select id="repo"></select></label>
+      <label>Agent (optional)<input type="text" id="agent" placeholder="claude" spellcheck="false" maxlength="40"></label>
+    </div>
+    <div id="list"></div>
   </div>
-  <div id="list"></div>
+  <div id="sync" hidden>
+    <div class="row">
+      <label class="check"><input type="checkbox" id="sync-enabled"> Sync statuses between Orca and Basecamp</label>
+      <label>When both sides changed
+        <select id="sync-rule">
+          <option value="orca-wins">Orca wins</option>
+          <option value="basecamp-wins">Basecamp wins</option>
+        </select>
+      </label>
+    </div>
+    <div class="row">
+      <label>Project (card columns)<select id="sync-project"></select></label>
+    </div>
+    <div id="sync-grid" class="grid"></div>
+    <div class="row">
+      <label>Custom Orca status<input type="text" id="sync-custom" placeholder="my-status" spellcheck="false" maxlength="40"></label>
+      <button type="button" id="sync-add">Add status</button>
+    </div>
+    <div class="row"><button type="button" id="sync-save" class="on">Save</button></div>
+  </div>
 </main>
 <script>
 (function () {
@@ -44,6 +70,12 @@
   var token = new URLSearchParams(location.search).get('token') || '';
   var $ = function (id) { return document.getElementById(id); };
   var kind = 'todo';
+  var BASE_STATUSES = ['todo', 'in-progress', 'in-review'];
+  var cfg = null;          // the whole sync config, merged with edits as they are made
+  var gridProject = '';    // project whose grid is on screen
+  var gridStatuses = [];   // Orca statuses shown in the grid, in order
+  var gridColumns = [];    // mappable columns of gridProject
+  var projects = [];       // Basecamp projects, as served by /api/projects
 
   function say(cls, text) {
     var box = $('notice');
@@ -109,12 +141,131 @@
     });
   }
 
+  // ---- Sync tab: every value from the server is shown with textContent only.
+  function mappingOf(projectId) {
+    var all = cfg.statusToColumn;
+    return Object.prototype.hasOwnProperty.call(all, projectId) ? all[projectId] : {};
+  }
+
+  /** Writes the grid selections into cfg for the project on screen (top to bottom keeps the first-status rule). */
+  function commitGrid() {
+    if (!cfg || !gridProject) return;
+    var selects = $('sync-grid').querySelectorAll('select');
+    var map = {};
+    gridStatuses.forEach(function (status, i) {
+      if (selects[i].value) map[status] = selects[i].value;
+    });
+    cfg.statusToColumn[gridProject] = map;
+  }
+
+  function renderGrid() {
+    var grid = $('sync-grid');
+    grid.textContent = '';
+    if (!gridProject) return;
+    var current = mappingOf(gridProject);
+    gridStatuses.forEach(function (status) {
+      var name = document.createElement('div');
+      name.textContent = status;
+      var select = document.createElement('select');
+      var none = document.createElement('option');
+      none.value = '';
+      none.textContent = 'none';
+      select.appendChild(none);
+      var known = false;
+      gridColumns.forEach(function (c) {
+        var o = document.createElement('option');
+        o.value = c.id;
+        o.textContent = c.name;
+        select.appendChild(o);
+        if (c.id === current[status]) known = true;
+      });
+      if (current[status] && !known) {
+        var stale = document.createElement('option');
+        stale.value = current[status];
+        stale.textContent = 'Column ' + current[status] + ' (not found)';
+        select.appendChild(stale);
+      }
+      select.value = current[status] || '';
+      grid.appendChild(name);
+      grid.appendChild(select);
+    });
+    var done = document.createElement('div');
+    done.textContent = 'completed';
+    var fixed = document.createElement('div');
+    fixed.className = 'fixed';
+    fixed.textContent = 'Done (fixed)';
+    grid.appendChild(done);
+    grid.appendChild(fixed);
+  }
+
+  function loadGrid() {
+    commitGrid();
+    gridProject = $('sync-project').value;
+    gridColumns = [];
+    if (!gridProject) return renderGrid();
+    var custom = Object.keys(mappingOf(gridProject)).filter(function (s) { return BASE_STATUSES.indexOf(s) < 0; });
+    gridStatuses = BASE_STATUSES.concat(custom);
+    renderGrid();
+    var asked = gridProject;
+    api('GET', '/api/columns?projectId=' + encodeURIComponent(asked)).then(function (j) {
+      if (asked !== gridProject) return;
+      if (!j.ok) return say('error', problem(j));
+      commitGrid();
+      gridColumns = j.columns.filter(function (c) { return c.mappable; });
+      renderGrid();
+    }, function (e) { say('error', 'Could not reach the picker server: ' + e.message); });
+  }
+
+  function saveSync() {
+    commitGrid();
+    cfg.enabled = $('sync-enabled').checked;
+    cfg.conflictRule = $('sync-rule').value;
+    var button = $('sync-save');
+    button.disabled = true;
+    api('POST', '/api/sync-config', cfg).then(function (j) {
+      button.disabled = false;
+      if (!j.ok) return say('error', problem(j));
+      cfg = j.config;
+      say('ok', 'Sync settings saved.');
+    }, function (e) { button.disabled = false; say('error', e.message); });
+  }
+
+  function addStatus() {
+    var status = $('sync-custom').value.trim();
+    if (!gridProject) return say('error', 'Choose a project first.');
+    if (!/^[A-Za-z0-9][\w.-]{0,39}$/.test(status) || status === 'completed') {
+      return say('error', 'Use letters, digits, dot, dash or underscore (not "completed").');
+    }
+    if (gridStatuses.indexOf(status) >= 0) return say('error', status + ' is already in the grid.');
+    commitGrid();
+    gridStatuses.push(status);
+    $('sync-custom').value = '';
+    say('', '');
+    renderGrid();
+  }
+
+  function loadSync() {
+    api('GET', '/api/sync-config').then(function (j) {
+      if (!j.ok) return say('error', problem(j));
+      cfg = j.config;
+      $('sync-enabled').checked = cfg.enabled;
+      $('sync-rule').value = cfg.conflictRule;
+      gridProject = '';
+      fill($('sync-project'), projects);
+      loadGrid();
+    }, function (e) { say('error', 'Could not reach the picker server: ' + e.message); });
+  }
+
   function load() {
     $('tab-todo').className = kind === 'todo' ? 'on' : '';
     $('tab-card').className = kind === 'card' ? 'on' : '';
+    $('tab-sync').className = kind === 'sync' ? 'on' : '';
     $('project-wrap').hidden = kind !== 'card';
+    $('sync').hidden = kind !== 'sync';
+    $('picker').hidden = kind === 'sync';
     $('list').textContent = '';
     say('', '');
+    if (kind === 'sync') return loadSync();
     var path = '/api/items?kind=' + kind;
     if (kind === 'card') {
       if (!$('project').value) return say('info', 'Choose a project.');
@@ -129,14 +280,20 @@
 
   $('tab-todo').addEventListener('click', function () { kind = 'todo'; load(); });
   $('tab-card').addEventListener('click', function () { kind = 'card'; load(); });
+  $('tab-sync').addEventListener('click', function () { kind = 'sync'; load(); });
   $('project').addEventListener('change', load);
+  $('sync-project').addEventListener('change', loadGrid);
+  $('sync-add').addEventListener('click', addStatus);
+  $('sync-save').addEventListener('click', saveSync);
 
   api('GET', '/api/repos').then(function (j) {
     if (!j.ok) return say('error', problem(j));
     fill($('repo'), j.repos);
   });
   api('GET', '/api/projects').then(function (j) {
-    if (j.ok) fill($('project'), j.projects);
+    if (!j.ok) return;
+    projects = j.projects;
+    fill($('project'), projects);
   });
   load();
 })();

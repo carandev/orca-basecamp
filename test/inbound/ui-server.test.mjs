@@ -4,6 +4,7 @@ import http from 'node:http';
 import { createUiServer } from '../../src/inbound/ui-server.mjs';
 import { createStartFromItem } from '../../src/usecases/start-from-item.mjs';
 import { SourceError } from '../../src/adapters/basecamp-cli.mjs';
+import { createSyncConfig } from '../../src/usecases/sync-config.mjs';
 
 const TOKEN = 'b'.repeat(48);
 const ITEM = {
@@ -34,8 +35,29 @@ function setup({ sourceError, createError } = {}) {
       sourceCalls.push(['get', q]);
       return ITEM;
     },
-    complete: async () => assert.fail('the picker never completes items')
+    complete: async () => assert.fail('the picker never completes items'),
+    columns: async (q) => {
+      sourceCalls.push(['columns', q]);
+      if (sourceError) throw sourceError;
+      return [{ id: '9', name: 'Review', type: 'Kanban::Column', mappable: true }];
+    }
   };
+  const configStore = new Map();
+  const configCalls = [];
+  const syncConfig = createSyncConfig({
+    storage: {
+      get: async (k) => {
+        configCalls.push(['get', k]);
+        return configStore.get(k) ?? null;
+      },
+      set: async (k, v) => {
+        configCalls.push(['set', k]);
+        configStore.set(k, v);
+      }
+    }
+  });
+  let saved = 0;
+  const onConfigSaved = () => void (saved += 1);
   const orca = {
     listRepos: async () => {
       orcaCalls.push(['listRepos']);
@@ -56,13 +78,13 @@ function setup({ sourceError, createError } = {}) {
     notify: async () => {},
     clock: { now: () => 1 }
   });
-  return { source, orca, startFromItem, sourceCalls, orcaCalls, links };
+  return { source, orca, startFromItem, sourceCalls, orcaCalls, links, syncConfig, configStore, configCalls, onConfigSaved, saved: () => saved };
 }
 
 const servers = [];
 async function start(opts = {}) {
   const s = opts.deps ?? setup();
-  const server = createUiServer({ source: s.source, orca: s.orca, startFromItem: s.startFromItem, html: '<h1>picker</h1>', token: TOKEN, ...opts.server });
+  const server = createUiServer({ source: s.source, orca: s.orca, startFromItem: s.startFromItem, syncConfig: s.syncConfig, onConfigSaved: s.onConfigSaved, html: '<h1>picker</h1>', token: TOKEN, ...opts.server });
   servers.push(server);
   const info = await server.start();
   return { server, s, ...info };
@@ -246,4 +268,111 @@ test('an unlinked start is 200 with status unlinked', async () => {
   const r = await post(port, VALID);
   assert.equal(r.status, 200);
   assert.equal(json(r).status, 'unlinked');
+});
+
+// ---- sync routes
+
+const postTo = (port, path, body, headers = {}) =>
+  request(port, {
+    method: 'POST',
+    path,
+    headers: { 'X-Token': TOKEN, 'Content-Type': 'application/json', ...headers },
+    body: typeof body === 'string' ? body : JSON.stringify(body)
+  });
+const CONFIG = { enabled: true, conflictRule: 'basecamp-wins', statusToColumn: { 7: { 'in-review': '9' } } };
+
+test('GET /api/columns returns the columns of a numeric project, no-store', async () => {
+  const { port, s } = await start();
+  const r = await get(port, '/api/columns?projectId=7');
+  assert.equal(r.status, 200);
+  assert.equal(r.headers['cache-control'], 'no-store');
+  assert.deepEqual(json(r).columns, [{ id: '9', name: 'Review', type: 'Kanban::Column', mappable: true }]);
+  assert.deepEqual(s.sourceCalls.at(-1), ['columns', { projectId: '7' }]);
+});
+
+test('GET /api/columns rejects a missing or non-numeric projectId with 400 and no CLI call', async () => {
+  const { port, s } = await start();
+  for (const q of ['', '?projectId=', '?projectId=7;rm', '?projectId=-1', '?projectId=a']) {
+    assert.equal((await get(port, `/api/columns${q}`)).status, 400, q);
+  }
+  assert.deepEqual(s.sourceCalls, []);
+});
+
+test('a columns CLI error (for example several card tables) is a 502 with hint and code', async () => {
+  const sourceError = new SourceError({ code: 'ambiguous', message: 'Multiple card tables', hint: 'use --card-table' });
+  const { port } = await start({ deps: setup({ sourceError }) });
+  const r = await get(port, '/api/columns?projectId=7');
+  assert.equal(r.status, 502);
+  assert.equal(json(r).error, 'Multiple card tables');
+  assert.equal(json(r).hint, 'use --card-table');
+  assert.equal(json(r).code, 'ambiguous');
+});
+
+test('GET /api/sync-config returns the defaults when nothing is stored', async () => {
+  const { port } = await start();
+  const r = await get(port, '/api/sync-config');
+  assert.equal(r.status, 200);
+  assert.deepEqual(json(r).config, { enabled: true, conflictRule: 'orca-wins', statusToColumn: {} });
+});
+
+test('POST /api/sync-config stores the config, returns it and calls onConfigSaved', async () => {
+  const { port, s } = await start();
+  const r = await postTo(port, '/api/sync-config', CONFIG);
+  assert.equal(r.status, 200);
+  assert.deepEqual(json(r).config, CONFIG);
+  assert.deepEqual(s.configStore.get('sync:config'), CONFIG);
+  assert.equal(s.saved(), 1);
+  assert.deepEqual(json(await get(port, '/api/sync-config')).config, CONFIG);
+});
+
+test('invalid sync configs are 400 and leave storage untouched', async () => {
+  const { port, s } = await start();
+  const bad = [
+    { ...CONFIG, conflictRule: 'newest-wins' },
+    { ...CONFIG, enabled: 'yes' },
+    { ...CONFIG, statusToColumn: { 7: { completed: '9' } } },
+    { ...CONFIG, statusToColumn: { 7: { 'in-review': 'Review' } } },
+    { ...CONFIG, statusToColumn: { abc: { 'in-review': '9' } } },
+    '{"enabled":true,"conflictRule":"orca-wins","statusToColumn":{"__proto__":{"a":"1"}}}',
+    '{nope',
+    '[]'
+  ];
+  for (const body of bad) assert.equal((await postTo(port, '/api/sync-config', body)).status, 400, JSON.stringify(body));
+  assert.equal(s.configStore.size, 0);
+  assert.equal(s.saved(), 0);
+  assert.equal(Object.prototype.polluted, undefined);
+});
+
+test('sync routes: wrong token, Host or Origin are 403 with no CLI or storage call', async () => {
+  const { port, s } = await start();
+  assert.equal((await get(port, '/api/columns?projectId=7', {})).status, 403);
+  assert.equal((await get(port, '/api/sync-config', { 'X-Token': 'nope' })).status, 403);
+  assert.equal((await get(port, '/api/sync-config', { 'X-Token': TOKEN, Host: 'evil.example' })).status, 403);
+  assert.equal((await postTo(port, '/api/sync-config', CONFIG, { 'X-Token': 'nope' })).status, 403);
+  assert.equal((await postTo(port, '/api/sync-config', CONFIG, { Origin: 'http://evil.example' })).status, 403);
+  assert.equal((await postTo(port, '/api/sync-config', CONFIG, { Host: 'evil.example' })).status, 403);
+  assert.deepEqual(s.sourceCalls, []);
+  assert.deepEqual(s.configCalls, []);
+  assert.equal(s.saved(), 0);
+});
+
+test('POST /api/sync-config needs application/json (415), a bounded body (413) and the right method', async () => {
+  const { port, s } = await start();
+  assert.equal((await postTo(port, '/api/sync-config', CONFIG, { 'Content-Type': 'text/plain' })).status, 415);
+  const big = await postTo(port, '/api/sync-config', JSON.stringify({ ...CONFIG, pad: 'x'.repeat(300 * 1024) })).catch(() => ({ status: 'reset' }));
+  assert.ok(big.status === 413 || big.status === 'reset');
+  assert.equal((await request(port, { method: 'PUT', path: '/api/sync-config', headers: { 'X-Token': TOKEN } })).status, 405);
+  assert.equal((await request(port, { method: 'POST', path: '/api/columns', headers: { 'X-Token': TOKEN } })).status, 405);
+  assert.equal(s.configStore.size, 0);
+});
+
+test('a storage failure while saving is a 502 and onConfigSaved is not called', async () => {
+  const deps = setup();
+  deps.syncConfig.save = async () => {
+    throw new Error('host gone');
+  };
+  const { port } = await start({ deps });
+  const r = await postTo(port, '/api/sync-config', CONFIG);
+  assert.equal(r.status, 502);
+  assert.equal(deps.saved(), 0);
 });

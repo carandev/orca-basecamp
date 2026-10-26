@@ -300,3 +300,19 @@ test('sync-now gives up waiting after 20 s without notifying', async () => {
   await pending;
   assert.equal(notes(s).length, 0);
 });
+
+test('the picker server gets the sync config port and onConfigSaved restarts a stopped poller', async () => {
+  const s = setup({ storage: { 'sync:config': SYNC_OFF } });
+  let args;
+  activate(s.orca, { ...s.deps, createServer: (a) => ((args = a), s.server) });
+  await s.handlers.start();
+  assert.equal(typeof args.syncConfig.get, 'function');
+  assert.equal(typeof args.syncConfig.save, 'function');
+  assert.deepEqual(await args.syncConfig.get(), SYNC_OFF);
+  assert.equal(typeof args.source.columns, 'function');
+  assert.equal(typeof args.onConfigSaved, 'function');
+  deactivate();
+  assert.equal(s.fake.live().length, 0);
+  args.onConfigSaved();
+  assert.equal(s.fake.live().filter((t) => t.kind === 'interval').length, 1);
+});

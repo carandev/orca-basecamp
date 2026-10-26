@@ -33,11 +33,13 @@ function setup({
   listError,
   stateError,
   completeError,
+  moveError,
+  moveResult,
   keysError,
   hooks = {},
   stateDelay = false
 } = {}) {
-  const log = { host: [], lists: 0, states: [], completes: [], reopens: [], orcaSets: [], notices: [] };
+  const log = { host: [], lists: 0, states: [], completes: [], reopens: [], moves: [], orcaSets: [], notices: [] };
   const store = new Map(Object.entries(links).map(([id, l]) => [`link:${id}`, l]));
   if (config !== undefined) store.set('sync:config', config);
   let inflight = 0;
@@ -87,6 +89,13 @@ function setup({
         log.reopens.push(ref);
         bc[ref.id] = 'open';
         return { status: 'reopened' };
+      },
+      move: async (ref) => {
+        log.moves.push(ref);
+        if (moveError) throw moveError;
+        if (moveResult === 'inaccessible') return { status: 'inaccessible' };
+        bc[ref.id] = ref.columnId;
+        return { status: 'moved' };
       }
     },
     orca: {
@@ -121,15 +130,20 @@ test('disabled: only the keepalive keys call and the config read happen, nothing
   assert.equal(s.log.completes.length + s.log.orcaSets.length, 0);
 });
 
-test('no links, or only card links in this slice, never reads the worktree list', async () => {
+test('no links never reads the worktree list', async () => {
   const none = setup();
   assert.equal((await none.sync.tick()).status, 'ok');
   assert.equal(none.log.lists, 0);
+});
+
+test('card links are synced too: the first tick snapshots without any write', async () => {
   const cards = setup({ links: { 'wt-1': card(55) }, orcaStatuses: { 'wt-1': 'in-review' }, bc: { 55: '9' } });
   const result = await cards.sync.tick();
-  assert.equal(result.attempted, 0);
-  assert.equal(cards.log.lists, 0);
-  assert.equal(cards.log.states.length, 0);
+  assert.equal(result.attempted, 1);
+  assert.equal(cards.log.lists, 1);
+  assert.deepEqual(cards.log.states, [{ type: 'card', id: 55, projectId: 7 }]);
+  assert.equal(cards.log.moves.length + cards.log.completes.length + cards.log.orcaSets.length, 0);
+  assert.deepEqual(stored(cards.store, 'wt-1').sync, { orca: 'in-review', bc: '9', at: NOW, lastOpenOrca: 'in-review' });
 });
 
 test('one worktree list per tick, and only linked items are read from Basecamp', async () => {
@@ -419,4 +433,94 @@ test('tick never throws even when the host keys call fails', async () => {
   const s = setup({ keysError: new Error('host gone') });
   const result = await s.sync.tick();
   assert.equal(result.status, 'failed');
+});
+
+// ---- cards -----------------------------------------------------------------
+
+const MAP = { enabled: true, conflictRule: 'orca-wins', statusToColumn: { 7: { todo: '8', 'in-progress': '8', 'in-review': '9' } } };
+const cardSetup = ({ base, orca, bc, ...rest }) =>
+  setup({ config: MAP, links: { 'wt-1': { ...card(55), v: 2, sync: sync(...base) } }, orcaStatuses: { 'wt-1': orca }, bc: { 55: bc }, ...rest });
+
+test('card: a mapped Orca status moves the card to its column and stores the baseline', async () => {
+  const s = cardSetup({ base: ['in-progress', '8'], orca: 'in-review', bc: '8' });
+  const result = await s.sync.tick();
+  assert.deepEqual(s.log.moves, [{ id: 55, projectId: 7, columnId: '9' }]);
+  assert.equal(s.log.completes.length, 0);
+  assert.equal(result.synced, 1);
+  assert.equal(stored(s.store, 'wt-1').sync.bc, '9');
+  await s.sync.tick();
+  assert.equal(s.log.moves.length, 1);
+});
+
+test('card: Orca completed marks the card done (complete), never a move', async () => {
+  const s = cardSetup({ base: ['in-review', '9'], orca: 'completed', bc: '9' });
+  await s.sync.tick();
+  assert.deepEqual(s.log.completes, [{ type: 'card', id: 55, projectId: 7 }]);
+  assert.equal(s.log.moves.length, 0);
+  assert.equal(stored(s.store, 'wt-1').sync.bc, 'completed');
+});
+
+test('card: an unmapped Orca status is ignored', async () => {
+  const s = cardSetup({ base: ['in-review', '9'], orca: 'my-custom', bc: '9' });
+  await s.sync.tick();
+  assert.equal(s.log.moves.length + s.log.completes.length + s.log.orcaSets.length, 0);
+});
+
+test('card: leaving completed to an unmapped status leaves the card where it is', async () => {
+  const s = cardSetup({ base: ['completed', 'completed'], orca: 'my-custom', bc: 'completed' });
+  await s.sync.tick();
+  assert.equal(s.log.moves.length + s.log.completes.length + s.log.orcaSets.length, 0);
+});
+
+test('card: several statuses on one column keep the current Orca status', async () => {
+  const same = cardSetup({ base: ['todo', '8'], orca: 'todo', bc: '9' });
+  await same.sync.tick();
+  assert.deepEqual(same.log.orcaSets, [['wt-1', 'in-review']]);
+  const kept = cardSetup({ base: ['in-review', '9'], orca: 'in-review', bc: '8' });
+  await kept.sync.tick();
+  assert.deepEqual(kept.log.orcaSets, [['wt-1', 'todo']]);
+  const stay = cardSetup({ base: ['todo', '9'], orca: 'in-progress', bc: '8' });
+  await stay.sync.tick();
+  assert.equal(stay.log.moves.length + stay.log.orcaSets.length, 0);
+});
+
+test('card: a card in an unmapped column leaves Orca unchanged', async () => {
+  const s = cardSetup({ base: ['in-review', '9'], orca: 'in-review', bc: '77' });
+  await s.sync.tick();
+  assert.equal(s.log.moves.length + s.log.completes.length + s.log.orcaSets.length, 0);
+});
+
+test('card: a column change in Basecamp sets Orca to the first status mapped to it', async () => {
+  const s = cardSetup({ base: ['in-review', '9'], orca: 'in-review', bc: '8' });
+  await s.sync.tick();
+  assert.deepEqual(s.log.orcaSets, [['wt-1', 'todo']]);
+  assert.equal(s.log.moves.length, 0);
+  assert.equal(stored(s.store, 'wt-1').sync.orca, 'todo');
+});
+
+test('card: Basecamp done sets Orca completed; a project without a mapping still tracks done', async () => {
+  const done = cardSetup({ base: ['in-review', '9'], orca: 'in-review', bc: 'completed' });
+  await done.sync.tick();
+  assert.deepEqual(done.log.orcaSets, [['wt-1', 'completed']]);
+  const none = setup({ links: { 'wt-1': { ...card(55), v: 2, sync: sync('in-review', '9') } }, orcaStatuses: { 'wt-1': 'completed' }, bc: { 55: '9' } });
+  await none.sync.tick();
+  assert.equal(none.log.completes.length, 1);
+});
+
+test('card: an inaccessible move is a failure and leaves the baseline unchanged', async () => {
+  const s = cardSetup({ base: ['in-progress', '8'], orca: 'in-review', bc: '8', moveResult: 'inaccessible' });
+  const result = await s.sync.tick();
+  assert.equal(result.failed, 1);
+  assert.deepEqual(stored(s.store, 'wt-1').sync, sync('in-progress', '8'));
+  assert.equal(s.log.notices.length, 1);
+});
+
+test('card: a move error (several card tables) is notified once with its message', async () => {
+  const boom = new SourceError({ code: 'ambiguous', message: 'Multiple card tables', retryable: false });
+  const s = cardSetup({ base: ['in-progress', '8'], orca: 'in-review', bc: '8', moveError: boom });
+  await s.sync.tick();
+  await s.sync.tick();
+  assert.equal(s.log.moves.length, 2);
+  assert.equal(s.log.notices.length, 1);
+  assert.match(s.log.notices[0].body, /Multiple card tables/);
 });

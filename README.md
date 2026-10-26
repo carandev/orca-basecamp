@@ -6,7 +6,7 @@ It talks to Basecamp only through the `basecamp` CLI. You need the CLI installed
 
 ## Quick path
 
-1. Orca: **Settings -> Plugins -> Install plugin -> Git URL**, paste this repository's URL (add `#v0.1.0` to pin a release) and accept the permissions.
+1. Orca: **Settings -> Plugins -> Install plugin -> Git URL**, paste this repository's URL (add `#v0.2.0` to pin a release) and accept the permissions.
 2. Command palette: **Basecamp: Diagnose**. Fix whatever it reports (see below).
 3. Command palette: **Basecamp: Start from item**, pick a repository and an item, press **Start**.
 
@@ -19,11 +19,49 @@ Requires Orca >= 1.4.0 and Node 22 or newer for development.
 | Basecamp: Diagnose | Checks that the CLI runs and is logged in. Shows a summary, never secrets |
 | Basecamp: Start from item | Opens a local picker for to-dos and cards. Start creates the worktree `bc-<id>-<slug>` with the item as the agent prompt, and links them |
 | Basecamp: Open linked item | Opens the item linked to the active worktree in an Orca tab (OS browser as fallback) |
-| Basecamp: Complete linked item | Completes the item linked to the active worktree. The link is kept if it fails |
+| Basecamp: Complete linked item | Completes the item linked to the active worktree and keeps the link, so later changes still sync. If it fails, the link is kept too |
+| Basecamp: Sync now | Runs one sync pass right away and waits for it (up to 20 s) |
 
 Open and Complete are always available. With no linked item they only notify "No linked item".
 
-When a linked worktree is removed, its item is completed once (10 s limit, no retries) and the link is deleted. If that fails, the notification carries the title and URL so you can finish by hand.
+When a linked worktree is removed, its item is completed once (10 s limit, no retries) and the link is deleted. If that fails, the notification carries the title and URL so you can finish by hand. This happens whether sync is on or off.
+
+## Status sync
+
+Linked items keep their status in step with the Orca workspace status, in both directions. **Sync is on by default** and runs about once a minute for linked worktrees; **Basecamp: Sync now** runs one pass on demand.
+
+| Orca status | To-do | Card |
+|-------------|-------|------|
+| `completed` | completed | moved to Done |
+| any other status | reopened | moved to the column mapped to that status (unmapped statuses are ignored) |
+
+Start also sets the initial Orca status: `in-progress` for an open to-do, `completed` for a completed one, and the mapped status for a card.
+
+### Sync tab
+
+Open the picker (**Basecamp: Start from item**) and choose the **Sync** tab:
+
+- **Enabled**: turns sync on or off. Off means no status writes in either direction.
+- **When both sides changed**: the conflict rule.
+  - `Orca wins` (default): Basecamp is overwritten with the Orca status.
+  - `Basecamp wins`: Orca is overwritten with the Basecamp state.
+- **Project grid**: for each project, pick the Basecamp card column for `todo`, `in-progress`, `in-review` and any custom status you add. Columns are listed by their title; `none` leaves a status unmapped. `completed` is fixed to Done. If several statuses share a column, Basecamp changes keep the current Orca status when it already maps there, otherwise the first status in the grid.
+
+The first pass for a link only records both sides and writes nothing, so enabling sync never rewrites existing items.
+
+### Notifications
+
+Notifications are sent only for conflicts and failures, never for successful syncs. A failure repeats only after the item has synced successfully again.
+
+### Limits
+
+- The poller stops when Orca restarts the plugin worker. It restarts on the first event or command afterwards, so run **Basecamp: Sync now** (or any command) after a restart.
+- Only one card table per project is supported. If the project has several, the CLI error is shown and cards are not moved.
+- The first 1000 worktrees from `orca worktree list` are read each pass; a truncated list is reported once.
+
+### Rollback
+
+Turn sync off in the Sync tab, or delete the `sync:config` entry. Links written by v0.2.0 (version 2) are not readable by v0.1.x: after downgrading, linked worktrees show "No linked item" until you start them again.
 
 ## Config file
 

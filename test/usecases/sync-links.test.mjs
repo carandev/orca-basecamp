@@ -437,7 +437,7 @@ test('tick never throws even when the host keys call fails', async () => {
 
 // ---- cards -----------------------------------------------------------------
 
-const MAP = { enabled: true, conflictRule: 'orca-wins', statusToColumn: { 7: { todo: '8', 'in-progress': '8', 'in-review': '9' } } };
+const MAP = { enabled: true, conflictRule: 'orca-wins', statusToColumn: { 7: { todo: ['8'], 'in-progress': ['8'], 'in-review': ['9'] } } };
 const cardSetup = ({ base, orca, bc, ...rest }) =>
   setup({ config: MAP, links: { 'wt-1': { ...card(55), v: 2, sync: sync(...base) } }, orcaStatuses: { 'wt-1': orca }, bc: { 55: bc }, ...rest });
 
@@ -523,4 +523,13 @@ test('card: a move error (several card tables) is notified once with its message
   assert.equal(s.log.moves.length, 2);
   assert.equal(s.log.notices.length, 1);
   assert.match(s.log.notices[0].body, /Multiple card tables/);
+});
+
+test('card: O to a status whose list holds the current column writes nothing but updates the baseline', async () => {
+  const config = { enabled: true, conflictRule: 'orca-wins', statusToColumn: { 7: { todo: ['8', '12'], 'in-review': ['9'] } } };
+  const s = setup({ config, links: { 'wt-1': { ...card(55), v: 2, sync: sync('in-review', '12') } }, orcaStatuses: { 'wt-1': 'todo' }, bc: { 55: '12' } });
+  await s.sync.tick();
+  assert.equal(s.log.moves.length, 0);
+  assert.equal(stored(s.store, 'wt-1').sync.orca, 'todo');
+  assert.equal(stored(s.store, 'wt-1').sync.bc, '12');
 });

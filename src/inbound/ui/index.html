@@ -24,6 +24,9 @@
   .check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); font-size: 14px; flex: 0 0 auto; }
   .grid { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(160px, 2fr); gap: 6px 12px; align-items: center; margin: 8px 0; }
   .grid .fixed { color: var(--muted); }
+  .cell { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
+  .col { display: inline-flex; gap: 4px; align-items: center; border: 1px solid var(--border); border-radius: 6px; padding: 2px 4px 2px 8px; background: var(--panel); }
+  .col button { padding: 0 6px; line-height: 1.2; }
 </style>
 </head>
 <body>
@@ -75,6 +78,7 @@
   var cfg = null;          // the whole sync config, merged with edits as they are made
   var gridProject = '';    // project whose grid is on screen
   var gridStatuses = [];   // Orca statuses shown in the grid, in order
+  var gridDraft = {};      // {status: [columnId, ...]} being edited for gridProject
   var gridColumns = [];    // mappable columns of gridProject
   var projects = [];       // Basecamp projects, as served by /api/projects
 
@@ -148,47 +152,72 @@
     return Object.prototype.hasOwnProperty.call(all, projectId) ? all[projectId] : {};
   }
 
-  /** Writes the grid selections into cfg for the project on screen (top to bottom keeps the first-status rule). */
+  /** Writes the draft of the project on screen into cfg, in grid order; statuses with no column are omitted. */
   function commitGrid() {
     if (!cfg || !gridProject) return;
-    var selects = $('sync-grid').querySelectorAll('select');
     var map = {};
-    gridStatuses.forEach(function (status, i) {
-      if (selects[i].value) map[status] = selects[i].value;
+    gridStatuses.forEach(function (status) {
+      if (gridDraft[status] && gridDraft[status].length > 0) map[status] = gridDraft[status].slice();
     });
     cfg.statusToColumn[gridProject] = map;
+  }
+
+  function columnTitle(id) {
+    for (var i = 0; i < gridColumns.length; i++) if (gridColumns[i].id === id) return gridColumns[i].name;
+    return 'Column ' + id + ' (not found)';
+  }
+
+  function columnItem(status, id, index) {
+    var item = document.createElement('span');
+    item.className = 'col';
+    item.textContent = columnTitle(id) + (index === 0 ? ' (destination)' : '');
+    var remove = document.createElement('button');
+    remove.type = 'button';
+    remove.textContent = '×';
+    remove.title = 'Remove column';
+    remove.addEventListener('click', function () {
+      gridDraft[status].splice(index, 1);
+      renderGrid();
+    });
+    item.appendChild(remove);
+    return item;
+  }
+
+  function addSelect(status) {
+    var select = document.createElement('select');
+    var none = document.createElement('option');
+    none.value = '';
+    none.textContent = gridDraft[status].length === 0 ? 'none' : 'add column';
+    select.appendChild(none);
+    gridColumns.forEach(function (c) {
+      if (gridDraft[status].indexOf(c.id) >= 0) return;
+      var o = document.createElement('option');
+      o.value = c.id;
+      o.textContent = c.name;
+      select.appendChild(o);
+    });
+    select.addEventListener('change', function () {
+      if (!select.value) return;
+      gridDraft[status].push(select.value);
+      renderGrid();
+    });
+    return select;
   }
 
   function renderGrid() {
     var grid = $('sync-grid');
     grid.textContent = '';
     if (!gridProject) return;
-    var current = mappingOf(gridProject);
     gridStatuses.forEach(function (status) {
+      if (!gridDraft[status]) gridDraft[status] = [];
       var name = document.createElement('div');
       name.textContent = status;
-      var select = document.createElement('select');
-      var none = document.createElement('option');
-      none.value = '';
-      none.textContent = 'none';
-      select.appendChild(none);
-      var known = false;
-      gridColumns.forEach(function (c) {
-        var o = document.createElement('option');
-        o.value = c.id;
-        o.textContent = c.name;
-        select.appendChild(o);
-        if (c.id === current[status]) known = true;
-      });
-      if (current[status] && !known) {
-        var stale = document.createElement('option');
-        stale.value = current[status];
-        stale.textContent = 'Column ' + current[status] + ' (not found)';
-        select.appendChild(stale);
-      }
-      select.value = current[status] || '';
+      var cell = document.createElement('div');
+      cell.className = 'cell';
+      gridDraft[status].forEach(function (id, i) { cell.appendChild(columnItem(status, id, i)); });
+      cell.appendChild(addSelect(status));
       grid.appendChild(name);
-      grid.appendChild(select);
+      grid.appendChild(cell);
     });
     var done = document.createElement('div');
     done.textContent = 'completed';
@@ -203,9 +232,12 @@
     commitGrid();
     gridProject = $('sync-project').value;
     gridColumns = [];
+    gridDraft = {};
     if (!gridProject) return renderGrid();
     var custom = Object.keys(mappingOf(gridProject)).filter(function (s) { return BASE_STATUSES.indexOf(s) < 0; });
     gridStatuses = BASE_STATUSES.concat(custom);
+    var saved = mappingOf(gridProject);
+    gridStatuses.forEach(function (st) { gridDraft[st] = Object.prototype.hasOwnProperty.call(saved, st) ? saved[st].slice() : []; });
     renderGrid();
     var asked = gridProject;
     api('GET', '/api/columns?projectId=' + encodeURIComponent(asked)).then(function (j) {

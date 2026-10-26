@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { validateSyncConfig, normalizeSyncConfig, DEFAULT_SYNC_CONFIG } from '../../src/domain/mapping.mjs';
 
-const valid = { enabled: true, conflictRule: 'orca-wins', statusToColumn: { 7: { 'in-review': '9', 'in-progress': '8' } } };
+const valid = { enabled: true, conflictRule: 'orca-wins', statusToColumn: { 7: { 'in-review': ['9'], 'in-progress': ['8'] } } };
 
 test('defaults: enabled, orca-wins, empty map', () => {
   assert.deepEqual(normalizeSyncConfig(undefined), { enabled: true, conflictRule: 'orca-wins', statusToColumn: {} });
@@ -28,7 +28,7 @@ test('normalize never throws and drops invalid parts', () => {
   const mixed = normalizeSyncConfig({
     statusToColumn: { 7: { 'in-review': '9', '--read': '1', completed: '3', ok: 'abc' }, abc: { a: '1' } }
   });
-  assert.deepEqual(mixed.statusToColumn, { 7: { 'in-review': '9' } });
+  assert.deepEqual(mixed.statusToColumn, { 7: { 'in-review': ['9'] } });
 });
 
 test('validate accepts a full valid config and returns a clean copy', () => {
@@ -39,7 +39,7 @@ test('validate accepts a full valid config and returns a clean copy', () => {
 });
 
 test('validate preserves status order inside a project', () => {
-  const r = validateSyncConfig({ ...valid, statusToColumn: { 7: { b: '2', a: '1' } } });
+  const r = validateSyncConfig({ ...valid, statusToColumn: { 7: { b: ['2'], a: ['1'] } } });
   assert.deepEqual(Object.keys(r.value.statusToColumn[7]), ['b', 'a']);
 });
 
@@ -95,4 +95,36 @@ test('validate enforces 50 projects and 30 statuses', () => {
 
 test('validate drops unknown top-level keys', () => {
   assert.deepEqual(validateSyncConfig({ ...valid, extra: 1 }).value, valid);
+});
+
+// ---- several columns per status ----
+
+test('legacy single-string columns are normalized to one-element arrays (stored and POSTed)', () => {
+  const legacy = { enabled: true, conflictRule: 'orca-wins', statusToColumn: { 7: { todo: '8', 'in-review': ['9', '10'] } } };
+  const expected = { 7: { todo: ['8'], 'in-review': ['9', '10'] } };
+  assert.deepEqual(normalizeSyncConfig(legacy).statusToColumn, expected);
+  const checked = validateSyncConfig(legacy);
+  assert.equal(checked.ok, true);
+  assert.deepEqual(checked.value.statusToColumn, expected);
+});
+
+test('validate keeps the column order and allows a column in several statuses', () => {
+  const r = validateSyncConfig({ ...valid, statusToColumn: { 7: { a: ['3', '1', '2'], b: ['1'] } } });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.value.statusToColumn[7], { a: ['3', '1', '2'], b: ['1'] });
+});
+
+test('validate rejects empty arrays, duplicates, non-numeric ids and more than 20 ids', () => {
+  const tooMany = Array.from({ length: 21 }, (_, i) => String(i + 1));
+  const twenty = tooMany.slice(0, 20);
+  const bad = [[], ['1', '1'], ['1', 'x'], ['1', 2], [''], tooMany, {}, null];
+  for (const columns of bad) {
+    assert.equal(validateSyncConfig({ ...valid, statusToColumn: { 7: { a: columns } } }).ok, false, JSON.stringify(columns));
+  }
+  assert.equal(validateSyncConfig({ ...valid, statusToColumn: { 7: { a: twenty } } }).ok, true);
+});
+
+test('normalize drops invalid column lists but keeps the valid ones', () => {
+  const r = normalizeSyncConfig({ statusToColumn: { 7: { a: [], b: ['1', '1'], c: ['x'], d: ['4', '5'] } } });
+  assert.deepEqual(r.statusToColumn, { 7: { d: ['4', '5'] } });
 });

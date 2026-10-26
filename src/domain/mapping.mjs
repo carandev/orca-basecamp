@@ -5,6 +5,7 @@ export const NUMERIC_ID = /^\d+$/;
 export const CONFLICT_RULES = ['orca-wins', 'basecamp-wins'];
 export const MAX_PROJECTS = 50;
 export const MAX_STATUSES = 30;
+export const MAX_COLUMNS_PER_STATUS = 20;
 /** `completed` is fixed (to-do complete / card Done), so it can never be a mapping key. */
 const RESERVED_STATUS = 'completed';
 
@@ -16,15 +17,27 @@ const validStatus = (s) => STATUS_PATTERN.test(s) && s !== RESERVED_STATUS && !N
 
 const defaults = () => ({ enabled: true, conflictRule: 'orca-wins', statusToColumn: {} });
 
-/** Builds a clean `{status: columnId}` map; the first problem is returned as `error`. */
+/**
+ * Clean list of column ids for one status: a legacy single id string becomes a one-element list.
+ * Lists must be non-empty, unique, numeric strings and at most MAX_COLUMNS_PER_STATUS long.
+ */
+function cleanColumns(value) {
+  const list = typeof value === 'string' ? [value] : value;
+  if (!Array.isArray(list) || list.length === 0 || list.length > MAX_COLUMNS_PER_STATUS) return null;
+  if (!list.every((c) => typeof c === 'string' && NUMERIC_ID.test(c))) return null;
+  return new Set(list).size === list.length ? [...list] : null;
+}
+
+/** Builds a clean `{status: [columnId, ...]}` map; the first problem is returned as `error`. */
 function cleanProject(statuses, lenient) {
   const out = {};
   for (const [status, column] of Object.entries(statuses)) {
-    if (!validStatus(status) || typeof column !== 'string' || !NUMERIC_ID.test(column)) {
+    const columns = validStatus(status) ? cleanColumns(column) : null;
+    if (columns === null) {
       if (lenient) continue;
       return { error: `Invalid mapping "${status}"` };
     }
-    out[status] = column;
+    out[status] = columns;
   }
   return { value: out };
 }

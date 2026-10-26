@@ -18,3 +18,9 @@ test('the list request carries mine=1|0 and cards only send projectId when not "
   assert.match(page, /\$\('project-wrap'\)\.hidden = kind !== 'card' \|\| \$\('mine'\)\.checked/);
   assert.match(page, /\$\('mine'\)\.addEventListener\('change', load\)/);
 });
+
+test('the Sync grid lists several columns per status with a destination label, remove button and add select', () => {
+  assert.match(page, /\(destination\)/);
+  assert.match(page, /'add column'/);
+  assert.match(page, /title = 'Remove column'/);
+});

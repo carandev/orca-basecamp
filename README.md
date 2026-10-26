@@ -35,9 +35,9 @@ Linked items keep their status in step with the Orca workspace status, in both d
 | Orca status | To-do | Card |
 |-------------|-------|------|
 | `completed` | completed | moved to Done |
-| any other status | reopened | moved to the column mapped to that status (unmapped statuses are ignored) |
+| any other status | reopened | moved to the first column mapped to that status (unmapped statuses are ignored) |
 
-Start also sets the initial Orca status: `in-progress` for an open to-do, `completed` for a completed one, and the mapped status for a card.
+Start also sets the initial Orca status: `in-progress` for an open to-do, `completed` for a completed one, and, for a card, the first status whose columns include the card's column.
 
 ### Sync tab
 
@@ -47,7 +47,10 @@ Open the picker (**Basecamp: Start from item**) and choose the **Sync** tab:
 - **When both sides changed**: the conflict rule.
   - `Orca wins` (default): Basecamp is overwritten with the Orca status.
   - `Basecamp wins`: Orca is overwritten with the Basecamp state.
-- **Project grid**: for each project, pick the Basecamp card column for `todo`, `in-progress`, `in-review` and any custom status you add. Columns are listed by their title; `none` leaves a status unmapped. `completed` is fixed to Done. If several statuses share a column, Basecamp changes keep the current Orca status when it already maps there, otherwise the first status in the grid.
+- **Project grid**: for each project, pick the Basecamp card columns for `todo`, `in-progress`, `in-review` and any custom status you add. Each status can have **several columns**: they are shown in order with a remove button, the first one is labelled "(destination)", and **add column** appends another. Columns are listed by their title; a status with no columns is unmapped. `completed` is fixed to Done. The same column may belong to several statuses.
+  - Orca to Basecamp: when a status changes, the card is moved to the status's first column (the destination), unless it is already in one of that status's columns, in which case it is not moved.
+  - Basecamp to Orca: when the card moves to a column, the Orca status is kept if its columns include that column; otherwise it becomes the first status in the grid whose columns include it. A column mapped to no status changes nothing in Orca.
+  - Example: map "Por desarrollar" and "Por corregir" to `todo`. Setting a worktree to `todo` moves its card to "Por desarrollar" (or leaves it in "Por corregir"), and a card dragged into either column sets the worktree to `todo` unless it already is.
 
 The first pass for a link only records both sides and writes nothing, so enabling sync never rewrites existing items.
 

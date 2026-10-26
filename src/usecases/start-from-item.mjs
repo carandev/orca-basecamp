@@ -102,11 +102,11 @@ export function createStartFromItem({ source, orca, storage, notify, clock, load
   }
 }
 
-/** To-do: in-progress, or completed when already done. Card: completed when done, else the first status mapped to its column. */
+/** To-do: in-progress, or completed when already done. Card: completed when done, else the first status whose columns include its column. */
 function initialStatus(item, projectMap = {}) {
   if (item.state === 'completed') return 'completed';
   if (item.type === 'todo') return item.state === 'open' ? 'in-progress' : null;
-  return Object.keys(projectMap).find((status) => projectMap[status] === item.state) ?? null;
+  return Object.keys(projectMap).find((status) => projectMap[status].includes(item.state)) ?? null;
 }
 
 async function findId(orca, name, path) {

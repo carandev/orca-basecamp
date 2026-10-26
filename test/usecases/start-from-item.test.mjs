@@ -226,7 +226,7 @@ test('the set is skipped with a notice and no baseline when less than 2 s remain
 });
 
 test('card: the first status mapped to its column is set, and a Done card is completed', async () => {
-  const map = { 7: { todo: '8', 'in-review': '9', 'also-review': '9' } };
+  const map = { 7: { todo: ['8'], 'in-review': ['9'], 'also-review': ['9'] } };
   const config = { ...SYNC_ON, statusToColumn: map };
   const mapped = setup({ syncConfig: config, item: { ...ITEM, type: 'card', state: '9' } });
   await mapped.start({ ...REQUEST, type: 'card' });
@@ -239,10 +239,18 @@ test('card: the first status mapped to its column is set, and a Done card is com
 });
 
 test('card in an unmapped column: no set, no baseline', async () => {
-  const config = { ...SYNC_ON, statusToColumn: { 7: { todo: '8' } } };
+  const config = { ...SYNC_ON, statusToColumn: { 7: { todo: ['8'] } } };
   const { start, log, store } = setup({ syncConfig: config, item: { ...ITEM, type: 'card', state: '5' } });
   const result = await start({ ...REQUEST, type: 'card' });
   assert.deepEqual(log.statusSets, []);
   assert.equal('sync' in store.get('link:wt-1'), false);
   assert.equal(result.status, 'linked');
+});
+
+test('card in the 2nd column of a status starts with that status', async () => {
+  const config = { ...SYNC_ON, statusToColumn: { 7: { todo: ['8', '12'], 'in-review': ['9'] } } };
+  const { start, log, store } = setup({ syncConfig: config, item: { ...ITEM, type: 'card', state: '12' } });
+  await start({ ...REQUEST, type: 'card' });
+  assert.deepEqual(log.statusSets.map((c) => c.slice(0, 2)), [['wt-1', 'todo']]);
+  assert.equal(store.get('link:wt-1').sync.orca, 'todo');
 });

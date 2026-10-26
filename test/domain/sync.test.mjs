@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { reconcile } from '../../src/domain/sync.mjs';
 
-const MAP = { todo: '8', 'in-progress': '8', 'in-review': '9' };
+const MAP = { todo: ['8', '12'], 'in-progress': ['8'], 'in-review': ['9'] };
 const card = (over) => ({ kind: 'card', statusToColumn: MAP, rule: 'orca-wins', ...over });
 const todo = (over) => ({ kind: 'todo', statusToColumn: {}, rule: 'orca-wins', ...over });
 
@@ -183,3 +183,44 @@ test('a status literally named like an Object prototype key is treated as unmapp
   assert.equal(r.writeBc, undefined);
   assert.equal(r.baseline.orca, 'constructor');
 });
+
+// ---- several columns per status (MAP.todo = ['8', '12']; '12' is "Por corregir") ----
+
+const rowsMulti = [
+  [
+    'O -> todo while the card sits in the 2nd todo column: no move, baseline records the new O',
+    card({ baseline: { orca: 'in-review', bc: '12', lastOpenOrca: 'in-review' }, orca: 'todo', bc: '12' }),
+    { baseline: { orca: 'todo', bc: '12', lastOpenOrca: 'todo' } }
+  ],
+  [
+    'O -> todo while the card sits in an unrelated column: move to the first todo column',
+    card({ baseline: { orca: 'in-review', bc: '9', lastOpenOrca: 'in-review' }, orca: 'todo', bc: '9' }),
+    { baseline: { orca: 'todo', bc: '8', lastOpenOrca: 'todo' }, writeBc: '8' }
+  ],
+  [
+    'card moves into the 2nd todo column while O=in-review: O becomes todo',
+    card({ baseline: { orca: 'in-review', bc: '9', lastOpenOrca: 'in-review' }, orca: 'in-review', bc: '12' }),
+    { baseline: { orca: 'todo', bc: '12', lastOpenOrca: 'todo' }, writeOrca: 'todo' }
+  ],
+  [
+    'card moves into the 2nd todo column while O=todo: no write',
+    card({ baseline: { orca: 'todo', bc: '8', lastOpenOrca: 'todo' }, orca: 'todo', bc: '12' }),
+    { baseline: { orca: 'todo', bc: '12', lastOpenOrca: 'todo' } }
+  ],
+  [
+    'a column shared by two statuses keeps the current status',
+    card({ baseline: { orca: 'in-progress', bc: '9', lastOpenOrca: 'in-progress' }, orca: 'in-progress', bc: '8' }),
+    { baseline: { orca: 'in-progress', bc: '8', lastOpenOrca: 'in-progress' } }
+  ],
+  [
+    'both changed and the card already sits in a column of the new O: convergent, no write',
+    card({ baseline: { orca: 'in-review', bc: '9', lastOpenOrca: 'in-review' }, orca: 'todo', bc: '12' }),
+    { baseline: { orca: 'todo', bc: '12', lastOpenOrca: 'todo' } }
+  ]
+];
+
+for (const [name, input, expected] of rowsMulti) {
+  test(`reconcile: ${name}`, () => {
+    assert.deepEqual(reconcile(input), expected);
+  });
+}

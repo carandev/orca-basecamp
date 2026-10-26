@@ -339,7 +339,7 @@ const postTo = (port, path, body, headers = {}) =>
     headers: { 'X-Token': TOKEN, 'Content-Type': 'application/json', ...headers },
     body: typeof body === 'string' ? body : JSON.stringify(body)
   });
-const CONFIG = { enabled: true, conflictRule: 'basecamp-wins', statusToColumn: { 7: { 'in-review': '9' } } };
+const CONFIG = { enabled: true, conflictRule: 'basecamp-wins', statusToColumn: { 7: { 'in-review': ['9'] } } };
 
 test('GET /api/columns returns the columns of a numeric project, no-store', async () => {
   const { port, s } = await start();
@@ -436,4 +436,32 @@ test('a storage failure while saving is a 502 and onConfigSaved is not called', 
   const r = await postTo(port, '/api/sync-config', CONFIG);
   assert.equal(r.status, 502);
   assert.equal(deps.saved(), 0);
+});
+
+test('POST /api/sync-config accepts several columns per status and GET returns the arrays', async () => {
+  const { port, s } = await start();
+  const body = { ...CONFIG, statusToColumn: { 7: { todo: ['8', '12'], 'in-review': ['9'] } } };
+  const r = await postTo(port, '/api/sync-config', body);
+  assert.equal(r.status, 200);
+  assert.deepEqual(s.configStore.get('sync:config'), body);
+  assert.deepEqual(json(await get(port, '/api/sync-config')).config, body);
+});
+
+test('POST /api/sync-config normalizes the legacy string form to arrays', async () => {
+  const { port, s } = await start();
+  const r = await postTo(port, '/api/sync-config', { ...CONFIG, statusToColumn: { 7: { todo: '8' } } });
+  assert.equal(r.status, 200);
+  assert.deepEqual(json(r).config.statusToColumn, { 7: { todo: ['8'] } });
+  assert.deepEqual(s.configStore.get('sync:config').statusToColumn, { 7: { todo: ['8'] } });
+});
+
+test('POST /api/sync-config rejects bad column lists with 400 and leaves storage untouched', async () => {
+  const { port, s } = await start();
+  const twentyOne = Array.from({ length: 21 }, (_, i) => String(i + 1));
+  for (const columns of [[], ['8', '8'], ['8', 'x'], twentyOne]) {
+    const r = await postTo(port, '/api/sync-config', { ...CONFIG, statusToColumn: { 7: { todo: columns } } });
+    assert.equal(r.status, 400, JSON.stringify(columns));
+  }
+  assert.equal(s.configStore.size, 0);
+  assert.equal(s.saved(), 0);
 });

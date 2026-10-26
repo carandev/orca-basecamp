@@ -69,7 +69,7 @@ Optional. Windows: `%APPDATA%\orca-basecamp\config.json`. Other systems: `$XDG_C
 
 ```json
 {
-  "basecampBin": "C:\Users\you\bin\basecamp.exe",
+  "basecampBin": "C:\\Users\\you\\bin\\basecamp.exe",
   "basecampEnv": { "BASECAMP_PROFILE": "work" }
 }
 ```

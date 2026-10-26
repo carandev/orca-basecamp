@@ -11,7 +11,8 @@ const RESERVED_STATUS = 'completed';
 export const DEFAULT_SYNC_CONFIG = Object.freeze({ enabled: true, conflictRule: 'orca-wins', statusToColumn: Object.freeze({}) });
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
-const validStatus = (s) => STATUS_PATTERN.test(s) && s !== RESERVED_STATUS;
+/** All-digit keys are rejected: JS orders integer-like keys first, which would break "first mapped status wins". */
+const validStatus = (s) => STATUS_PATTERN.test(s) && s !== RESERVED_STATUS && !NUMERIC_ID.test(s);
 
 const defaults = () => ({ enabled: true, conflictRule: 'orca-wins', statusToColumn: {} });
 

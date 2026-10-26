@@ -65,7 +65,7 @@ export function createUiServer({
     res.writeHead(status, { 'Content-Type': type, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...extra });
     res.end(typeof body === 'string' ? body : JSON.stringify(body));
   }
-  const fail = (res, status, error, extra = {}) => send(res, status, { ok: false, error, ...extra });
+  const fail = (res, status, error, extra = {}, headers = {}) => send(res, status, { ok: false, error, ...extra }, undefined, headers);
 
   /** A failure of a port: CLI errors carry code, hint and retryable (shown, never acted on). */
   const portFailure = (res, error) => {
@@ -83,8 +83,9 @@ export function createUiServer({
       req.on('data', (chunk) => {
         size += chunk.length;
         if (size > maxBodyBytes) {
+          req.removeAllListeners('data');
+          req.pause();
           reject(Object.assign(new Error('Request body too large'), { status: 413 }));
-          req.destroy();
           return;
         }
         chunks.push(chunk);
@@ -123,8 +124,6 @@ export function createUiServer({
 
   /** Shared POST checks (Origin, Content-Type, size, JSON object). Sends the failure and returns null, or returns the body. */
   async function postedObject(req, res, origins) {
-    const origin = req.headers.origin;
-    if (origin !== undefined && !origins.some((o) => origin === `http://${o}`)) return void fail(res, 403, 'Bad Origin');
     if (!String(req.headers['content-type'] ?? '').toLowerCase().startsWith('application/json')) {
       return void fail(res, 415, 'Content-Type must be application/json');
     }
@@ -132,6 +131,11 @@ export function createUiServer({
     try {
       body = JSON.parse(await readBody(req));
     } catch (e) {
+      if (e.status === 413) {
+        // Reply first, then drop the connection: destroying before the reply would reset the client.
+        res.once('finish', () => req.destroy());
+        return void fail(res, 413, e.message, {}, { Connection: 'close' });
+      }
       return void (e.status ? fail(res, e.status, e.message) : fail(res, 400, `Invalid JSON: ${e.message}`));
     }
     if (body === null || typeof body !== 'object' || Array.isArray(body)) return void fail(res, 400, 'Expected a JSON object');
@@ -200,6 +204,8 @@ export function createUiServer({
     }[url.pathname];
     if (!allowed) return fail(res, 404, 'Not found');
     if (![allowed].flat().includes(req.method)) return fail(res, 405, 'Method not allowed');
+    const origin = req.headers.origin;
+    if (origin !== undefined && !origins.some((o) => origin === `http://${o}`)) return fail(res, 403, 'Bad Origin');
     if (!tokenMatches(req.headers['x-token'], token)) return fail(res, 403, 'Invalid token');
 
     if (url.pathname === '/api/start') return start_(req, res, origins);

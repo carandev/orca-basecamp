@@ -161,11 +161,41 @@ test('wrong token, foreign Host and foreign Origin are 403 with no source or Orc
   assert.deepEqual(s.orcaCalls, []);
 });
 
+test('the picker server binds to the loopback address only (characterization)', async () => {
+  const s = setup();
+  const real = http.createServer;
+  let bound;
+  http.createServer = (...args) => (bound = real.apply(http, args));
+  try {
+    const ui = createUiServer({ source: s.source, orca: s.orca, startFromItem: s.startFromItem, syncConfig: s.syncConfig, html: '', token: TOKEN });
+    servers.push(ui);
+    await ui.start();
+  } finally {
+    http.createServer = real;
+  }
+  assert.equal(bound.address().address, '127.0.0.1');
+});
+
+test('GET with a foreign Origin is 403 on v1 and sync routes, with no CLI or storage call', async () => {
+  const { port, s } = await start();
+  const evil = { 'X-Token': TOKEN, Origin: 'http://evil.example' };
+  for (const path of ['/api/repos', '/api/projects', '/api/items?kind=todo', '/api/columns?projectId=7', '/api/sync-config']) {
+    assert.equal((await get(port, path, evil)).status, 403, path);
+  }
+  assert.deepEqual(s.sourceCalls, []);
+  assert.deepEqual(s.orcaCalls, []);
+  assert.deepEqual(s.configCalls, []);
+  const same = { 'X-Token': TOKEN, Origin: `http://localhost:${port}` };
+  assert.equal((await get(port, '/api/repos', same)).status, 200);
+  assert.equal((await get(port, '/api/sync-config')).status, 200);
+});
+
 test('POST needs application/json (415) and a bounded body (413)', async () => {
   const { port, s } = await start();
   assert.equal((await post(port, VALID, { 'Content-Type': 'text/plain' })).status, 415);
-  const big = await post(port, JSON.stringify({ ...VALID, pad: 'x'.repeat(300 * 1024) })).catch(() => ({ status: 'reset' }));
-  assert.ok(big.status === 413 || big.status === 'reset');
+  const big = await post(port, JSON.stringify({ ...VALID, pad: 'x'.repeat(300 * 1024) }));
+  assert.equal(big.status, 413);
+  assert.equal(json(big).ok, false);
   assert.deepEqual(s.orcaCalls, []);
   assert.equal((await post(port, VALID, { Origin: `http://127.0.0.1:${port}` })).status, 200);
 });
@@ -359,8 +389,9 @@ test('sync routes: wrong token, Host or Origin are 403 with no CLI or storage ca
 test('POST /api/sync-config needs application/json (415), a bounded body (413) and the right method', async () => {
   const { port, s } = await start();
   assert.equal((await postTo(port, '/api/sync-config', CONFIG, { 'Content-Type': 'text/plain' })).status, 415);
-  const big = await postTo(port, '/api/sync-config', JSON.stringify({ ...CONFIG, pad: 'x'.repeat(300 * 1024) })).catch(() => ({ status: 'reset' }));
-  assert.ok(big.status === 413 || big.status === 'reset');
+  const big = await postTo(port, '/api/sync-config', JSON.stringify({ ...CONFIG, pad: 'x'.repeat(300 * 1024) }));
+  assert.equal(big.status, 413);
+  assert.equal(json(big).ok, false);
   assert.equal((await request(port, { method: 'PUT', path: '/api/sync-config', headers: { 'X-Token': TOKEN } })).status, 405);
   assert.equal((await request(port, { method: 'POST', path: '/api/columns', headers: { 'X-Token': TOKEN } })).status, 405);
   assert.equal(s.configStore.size, 0);

@@ -65,6 +65,12 @@ test('validate rejects the completed key, __proto__ and malformed status names',
   assert.equal(validateSyncConfig(withStatus('my.custom_1-x')).ok, true);
 });
 
+test('validate rejects all-digit status keys (JS would reorder them)', () => {
+  const withStatus = (status) => ({ enabled: true, conflictRule: 'orca-wins', statusToColumn: { 7: { [status]: '9' } } });
+  for (const status of ['1', '0', '007']) assert.equal(validateSyncConfig(withStatus(status)).ok, false, status);
+  assert.equal(validateSyncConfig(withStatus('1a')).ok, true);
+});
+
 test('validate rejects a __proto__ project key', () => {
   const body = JSON.parse('{"enabled":true,"conflictRule":"orca-wins","statusToColumn":{"__proto__":{"a":"1"}}}');
   assert.equal(validateSyncConfig(body).ok, false);

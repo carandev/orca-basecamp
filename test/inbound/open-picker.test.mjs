@@ -59,3 +59,28 @@ test('still notifies the url when nothing can be opened', async () => {
   assert.equal(s.notes.length, 1);
   assert.match(s.logs.join('\n'), /no browser/);
 });
+
+test('link mode creates a session for the given worktree and opens a tab URL with mode=link and the session', async () => {
+  const s = setup({ active: null });
+  const sessions = [];
+  s.deps.server.createLinkSession = (target) => {
+    sessions.push(target);
+    return 'nonce123';
+  };
+  const target = { worktreeId: 'w9', displayName: 'my-tree' };
+  const r = await openPicker({ ...s.deps, link: target });
+  const url = `${URL_}&mode=link&session=nonce123`;
+  assert.deepEqual(r, { url, opened: 'orca' });
+  assert.deepEqual(sessions, [target]);
+  assert.deepEqual(s.tabs, [{ worktreeId: 'w9', url }]);
+  assert.deepEqual(s.opened, []);
+});
+
+test('link mode falls back to the OS browser with the same link URL', async () => {
+  const s = setup({ tabFails: true });
+  s.deps.server.createLinkSession = () => 'n1';
+  const r = await openPicker({ ...s.deps, link: { worktreeId: 'w9', displayName: 'x' } });
+  assert.equal(r.opened, 'browser');
+  assert.deepEqual(s.opened, [`${URL_}&mode=link&session=n1`]);
+  assert.match(s.notes[0][0], /Link item/);
+});

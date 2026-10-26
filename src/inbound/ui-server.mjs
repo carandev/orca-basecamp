@@ -14,6 +14,7 @@ const CSP = [
 const NUMERIC = /^\d+$/;
 const AGENT = /^[\w.-]{1,40}$/;
 const KINDS = ['todo', 'card'];
+const LINK_SESSION_TTL_MS = 15 * 60_000;
 
 function tokenMatches(given, expected) {
   if (typeof given !== 'string') return false;
@@ -35,12 +36,17 @@ function numericId(value) {
  * syncConfig {get, save} (the stored sync settings) and onConfigSaved() (called after a successful save).
  * `html` is the page body (a string, or a function returning it, possibly async). `token` defaults to a fresh
  * random value. Shuts itself down after `idleMs` without requests.
- * Returns { start() -> { url, port, token } (reuses a running server), stop(), isRunning() }.
+ * Link mode: `createLinkSession({worktreeId, displayName})` returns a random single-use nonce (valid 15 minutes on
+ * `clock`) bound to that worktree. `/api/link` carries `{type, id, projectId, session}`; the target worktree comes
+ * only from the session, and `linkItem(request)` (link an existing worktree) refetches the item by id.
+ * Returns { start() -> { url, port, token } (reuses a running server), createLinkSession(), stop(), isRunning() }.
  */
 export function createUiServer({
   source,
   orca,
   startFromItem,
+  linkItem,
+  clock = { now: () => Date.now() },
   syncConfig,
   onConfigSaved = () => {},
   html,
@@ -52,6 +58,25 @@ export function createUiServer({
   let port = 0;
   let idleTimer = null;
   let starting = null;
+  const linkSessions = new Map();
+
+  function createLinkSession({ worktreeId, displayName }) {
+    for (const [nonce, entry] of linkSessions) if (entry.expiresAt <= clock.now()) linkSessions.delete(nonce);
+    const nonce = randomBytes(24).toString('hex');
+    linkSessions.set(nonce, { worktreeId, displayName, expiresAt: clock.now() + LINK_SESSION_TTL_MS });
+    return nonce;
+  }
+
+  /** The live session for `nonce`, or null (unknown, malformed or expired; an expired one is dropped). */
+  function liveSession(nonce) {
+    const entry = typeof nonce === 'string' ? linkSessions.get(nonce) : undefined;
+    if (!entry) return null;
+    if (entry.expiresAt <= clock.now()) {
+      linkSessions.delete(nonce);
+      return null;
+    }
+    return entry;
+  }
 
   const urlOf = () => `http://127.0.0.1:${port}/?token=${token}`;
 
@@ -186,6 +211,36 @@ export function createUiServer({
     return fail(res, 502, result.error ?? 'Start failed', result.hint ? { hint: result.hint } : {});
   }
 
+  async function linkSession_(res, url) {
+    const entry = liveSession(url.searchParams.get('session'));
+    if (!entry) return fail(res, 400, 'Unknown or expired link session');
+    return send(res, 200, { ok: true, displayName: entry.displayName });
+  }
+
+  async function link_(req, res, origins) {
+    const body = await postedObject(req, res, origins);
+    if (!body) return;
+    const id = numericId(body.id);
+    const projectId = numericId(body.projectId);
+    if (!KINDS.includes(body.type)) return fail(res, 400, 'type must be "todo" or "card"');
+    if (id === null || projectId === null) return fail(res, 400, 'id and projectId must be numeric ids');
+    const entry = liveSession(body.session);
+    if (!entry) return fail(res, 400, 'Unknown or expired link session');
+
+    // Claim the session before awaiting anything, so two concurrent requests cannot both use it.
+    linkSessions.delete(body.session);
+    let result;
+    try {
+      result = await linkItem({ worktreeId: entry.worktreeId, displayName: entry.displayName, type: body.type, id, projectId });
+    } catch (error) {
+      result = { status: 'failed', error: error?.message ?? String(error) };
+    }
+    if (result.status === 'linked') return send(res, 200, { ok: true, title: result.title, displayName: entry.displayName });
+    // A failed attempt does not burn the session: the user can retry from the same page.
+    linkSessions.set(body.session, entry);
+    return fail(res, 502, result.error ?? 'Link failed', result.hint ? { hint: result.hint } : {});
+  }
+
   async function handle(req, res) {
     touch();
     const origins = [`127.0.0.1:${port}`, `localhost:${port}`];
@@ -204,7 +259,9 @@ export function createUiServer({
       '/api/items': 'GET',
       '/api/columns': 'GET',
       '/api/sync-config': ['GET', 'POST'],
-      '/api/start': 'POST'
+      '/api/start': 'POST',
+      '/api/link': 'POST',
+      '/api/link-session': 'GET'
     }[url.pathname];
     if (!allowed) return fail(res, 404, 'Not found');
     if (![allowed].flat().includes(req.method)) return fail(res, 405, 'Method not allowed');
@@ -213,6 +270,8 @@ export function createUiServer({
     if (!tokenMatches(req.headers['x-token'], token)) return fail(res, 403, 'Invalid token');
 
     if (url.pathname === '/api/start') return start_(req, res, origins);
+    if (url.pathname === '/api/link') return link_(req, res, origins);
+    if (url.pathname === '/api/link-session') return linkSession_(res, url);
     if (url.pathname === '/api/items') return items(res, url);
     if (url.pathname === '/api/columns') return columns(res, url);
     if (url.pathname === '/api/sync-config') {
@@ -266,5 +325,5 @@ export function createUiServer({
     });
   }
 
-  return { start, stop, isRunning: () => server !== null };
+  return { start, createLinkSession, stop, isRunning: () => server !== null };
 }

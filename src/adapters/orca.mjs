@@ -93,7 +93,7 @@ export function createOrcaAdapter({ orcaCli, readContext }) {
         worktreePath = matches[0].path;
       }
       if (!worktreeId || !worktreePath) throw new Error('Could not resolve the active worktree id and path');
-      return { worktreeId, worktreePath };
+      return { worktreeId, worktreePath, displayName: context.displayName };
     }
   };
 }

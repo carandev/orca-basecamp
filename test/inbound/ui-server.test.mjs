@@ -5,6 +5,7 @@ import { createUiServer } from '../../src/inbound/ui-server.mjs';
 import { createStartFromItem } from '../../src/usecases/start-from-item.mjs';
 import { SourceError } from '../../src/adapters/basecamp-cli.mjs';
 import { createSyncConfig } from '../../src/usecases/sync-config.mjs';
+import { createLinkExisting } from '../../src/usecases/link-existing.mjs';
 
 const TOKEN = 'b'.repeat(48);
 const ITEM = {
@@ -17,7 +18,7 @@ const ITEM = {
   appUrl: 'https://app.basecamp.com/a/buckets/7/todos/1'
 };
 
-function setup({ sourceError, createError } = {}) {
+function setup({ sourceError, createError, getError } = {}) {
   const sourceCalls = [];
   const orcaCalls = [];
   const links = new Map();
@@ -33,6 +34,7 @@ function setup({ sourceError, createError } = {}) {
     },
     get: async (q) => {
       sourceCalls.push(['get', q]);
+      if (getError) throw getError;
       return ITEM;
     },
     complete: async () => assert.fail('the picker never completes items'),
@@ -70,7 +72,10 @@ function setup({ sourceError, createError } = {}) {
     },
     findWorktree: async () => null
   };
-  const storage = { set: async (k, v) => links.set(k, v) };
+  const storage = { get: async (k) => links.get(k) ?? null, set: async (k, v) => links.set(k, v) };
+  const notes = [];
+  const time = { now: 1000 };
+  const linkItem = createLinkExisting({ source, storage, notify: async (t, b) => notes.push([t, b]), clock: { now: () => time.now } });
   const startFromItem = createStartFromItem({
     source,
     orca,
@@ -78,13 +83,13 @@ function setup({ sourceError, createError } = {}) {
     notify: async () => {},
     clock: { now: () => 1 }
   });
-  return { source, orca, startFromItem, sourceCalls, orcaCalls, links, syncConfig, configStore, configCalls, onConfigSaved, saved: () => saved };
+  return { source, orca, startFromItem, linkItem, notes, time, sourceCalls, orcaCalls, links, syncConfig, configStore, configCalls, onConfigSaved, saved: () => saved };
 }
 
 const servers = [];
 async function start(opts = {}) {
   const s = opts.deps ?? setup();
-  const server = createUiServer({ source: s.source, orca: s.orca, startFromItem: s.startFromItem, syncConfig: s.syncConfig, onConfigSaved: s.onConfigSaved, html: '<h1>picker</h1>', token: TOKEN, ...opts.server });
+  const server = createUiServer({ source: s.source, orca: s.orca, startFromItem: s.startFromItem, linkItem: s.linkItem, clock: { now: () => s.time.now }, syncConfig: s.syncConfig, onConfigSaved: s.onConfigSaved, html: '<h1>picker</h1>', token: TOKEN, ...opts.server });
   servers.push(server);
   const info = await server.start();
   return { server, s, ...info };
@@ -464,4 +469,127 @@ test('POST /api/sync-config rejects bad column lists with 400 and leaves storage
   }
   assert.equal(s.configStore.size, 0);
   assert.equal(s.saved(), 0);
+});
+
+// ---- Link an existing worktree
+
+const linkPost = (port, body, headers = {}) =>
+  request(port, {
+    method: 'POST',
+    path: '/api/link',
+    headers: { 'X-Token': TOKEN, 'Content-Type': 'application/json', ...headers },
+    body: typeof body === 'string' ? body : JSON.stringify(body)
+  });
+const linkBody = (session, extra = {}) => ({ type: 'todo', id: 1, projectId: 7, session, ...extra });
+const SESSION_TTL_MS = 15 * 60_000;
+
+test('POST /api/link refetches the item, ignores client text and writes a v2 link without a baseline', async () => {
+  const { server, s, port } = await start();
+  const session = server.createLinkSession({ worktreeId: 'w1', displayName: 'my-tree' });
+  const r = await linkPost(port, linkBody(session, { title: 'Evil', appUrl: 'https://evil', worktreeId: 'other' }));
+  assert.equal(r.status, 200);
+  assert.equal(json(r).ok, true);
+  assert.equal(r.headers['cache-control'], 'no-store');
+  assert.deepEqual(s.sourceCalls.filter(([n]) => n === 'get'), [['get', { type: 'todo', id: '1', projectId: '7' }]]);
+  assert.deepEqual([...s.links.keys()], ['link:w1']);
+  assert.deepEqual(s.links.get('link:w1'), { v: 2, type: 'todo', id: 1, projectId: 7, appUrl: ITEM.appUrl, title: 'Real title', createdAt: 1000 });
+  assert.deepEqual(s.notes.at(-1)[1], 'Linked Real title to my-tree');
+  assert.equal(s.orcaCalls.length, 0);
+});
+
+test('replacing an existing link notifies with the title of the replaced item', async () => {
+  const s = setup();
+  s.links.set('link:w1', { v: 1, type: 'card', id: 9, projectId: 7, appUrl: 'https://x', title: 'Old item', createdAt: 1 });
+  const { server, port } = await start({ deps: s });
+  const session = server.createLinkSession({ worktreeId: 'w1', displayName: 'my-tree' });
+  assert.equal((await linkPost(port, linkBody(session))).status, 200);
+  assert.ok(s.notes.some(([, b]) => /Old item/.test(b)));
+  assert.equal(s.links.get('link:w1').title, 'Real title');
+});
+
+test('an unknown session is 400 and nothing is fetched or written', async () => {
+  const { s, port } = await start();
+  const r = await linkPost(port, linkBody('f'.repeat(32)));
+  assert.equal(r.status, 400);
+  assert.equal(s.links.size, 0);
+  assert.equal(s.sourceCalls.length, 0);
+  assert.equal((await linkPost(port, { type: 'todo', id: 1, projectId: 7 })).status, 400);
+});
+
+test('an expired session is 400 and nothing is written', async () => {
+  const { server, s, port } = await start();
+  const session = server.createLinkSession({ worktreeId: 'w1', displayName: 'my-tree' });
+  s.time.now += SESSION_TTL_MS + 1;
+  assert.equal((await linkPost(port, linkBody(session))).status, 400);
+  assert.equal(s.links.size, 0);
+});
+
+test('a session is single-use', async () => {
+  const { server, s, port } = await start();
+  const session = server.createLinkSession({ worktreeId: 'w1', displayName: 'my-tree' });
+  assert.equal((await linkPost(port, linkBody(session))).status, 200);
+  assert.equal((await linkPost(port, linkBody(session, { id: 2 }))).status, 400);
+  assert.equal(s.links.get('link:w1').id, 1);
+});
+
+test('a failed refetch keeps the session so the user can retry', async () => {
+  const s = setup({ getError: new SourceError({ code: 'api_error', message: 'boom', retryable: true }) });
+  const { server, port } = await start({ deps: s });
+  const session = server.createLinkSession({ worktreeId: 'w1', displayName: 'my-tree' });
+  assert.equal((await linkPost(port, linkBody(session))).status, 502);
+  assert.equal(s.links.size, 0);
+  s.sourceCalls.length = 0;
+  assert.equal((await linkPost(port, linkBody(session))).status, 502);
+  assert.equal(s.sourceCalls.length, 1);
+});
+
+test('POST /api/link rejects a foreign Origin, a bad token, a bad Content-Type and a bad body', async () => {
+  const { server, s, port } = await start();
+  const session = server.createLinkSession({ worktreeId: 'w1', displayName: 'my-tree' });
+  assert.equal((await linkPost(port, linkBody(session), { Origin: 'http://evil.example' })).status, 403);
+  assert.equal((await linkPost(port, linkBody(session), { 'X-Token': 'x'.repeat(48) })).status, 403);
+  assert.equal((await linkPost(port, linkBody(session), { 'Content-Type': 'text/plain' })).status, 415);
+  assert.equal((await linkPost(port, '{nope')).status, 400);
+  assert.equal(s.links.size, 0);
+  // None of those consumed the session.
+  assert.equal((await linkPost(port, linkBody(session))).status, 200);
+});
+
+test('POST /api/link needs numeric ids and a known type, and keeps the session on a 400', async () => {
+  const { server, s, port } = await start();
+  const session = server.createLinkSession({ worktreeId: 'w1', displayName: 'my-tree' });
+  assert.equal((await linkPost(port, linkBody(session, { id: '--help' }))).status, 400);
+  assert.equal((await linkPost(port, linkBody(session, { projectId: 'x' }))).status, 400);
+  assert.equal((await linkPost(port, linkBody(session, { type: 'message' }))).status, 400);
+  assert.equal(s.links.size, 0);
+  assert.equal((await linkPost(port, linkBody(session))).status, 200);
+});
+
+test('POST /api/link rejects an oversized body with 413', async () => {
+  const { server, port } = await start({ server: { maxBodyBytes: 64 } });
+  const session = server.createLinkSession({ worktreeId: 'w1', displayName: 'my-tree' });
+  assert.equal((await linkPost(port, linkBody(session, { pad: 'x'.repeat(500) }))).status, 413);
+});
+
+test('GET /api/link-session returns the display name of a live session only, and does not consume it', async () => {
+  const { server, s, port } = await start();
+  const session = server.createLinkSession({ worktreeId: 'w1', displayName: 'my-tree' });
+  const r = await get(port, `/api/link-session?session=${session}`);
+  assert.equal(r.status, 200);
+  assert.deepEqual(json(r), { ok: true, displayName: 'my-tree' });
+  assert.equal((await get(port, `/api/link-session?session=${session}`)).status, 200);
+  assert.equal((await get(port, '/api/link-session?session=nope')).status, 400);
+  assert.equal((await get(port, '/api/link-session')).status, 400);
+  assert.equal((await get(port, `/api/link-session?session=${session}`, {})).status, 403);
+  assert.equal((await get(port, `/api/link-session?session=${session}`, { 'X-Token': TOKEN, Origin: 'http://evil.example' })).status, 403);
+  s.time.now += SESSION_TTL_MS + 1;
+  assert.equal((await get(port, `/api/link-session?session=${session}`)).status, 400);
+});
+
+test('link sessions are unguessable and distinct', async () => {
+  const { server } = await start();
+  const a = server.createLinkSession({ worktreeId: 'w1', displayName: 'a' });
+  const b = server.createLinkSession({ worktreeId: 'w1', displayName: 'a' });
+  assert.match(a, /^[0-9a-f]{32,}$/);
+  assert.notEqual(a, b);
 });

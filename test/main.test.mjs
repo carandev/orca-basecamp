@@ -63,7 +63,17 @@ function setup({ files = {}, replies = [], context = null, storage = {}, worktre
   const calls = [];
   const orcaCalls = [];
   const opened = [];
-  const server = { stops: 0, start: async () => ({ url: 'http://127.0.0.1:5555/?token=t' }), stop: async () => void (server.stops += 1) };
+  const server = {
+    stops: 0,
+    created: 0,
+    sessions: [],
+    start: async () => ({ url: 'http://127.0.0.1:5555/?token=t' }),
+    createLinkSession: (target) => {
+      server.sessions.push(target);
+      return 'sess1';
+    },
+    stop: async () => void (server.stops += 1)
+  };
   const deps = {
     fs: { readFile: async (p) => (p in files ? files[p] : null) },
     configFile: CONFIG_FILE,
@@ -84,7 +94,10 @@ function setup({ files = {}, replies = [], context = null, storage = {}, worktre
       return {};
     },
     openExternal: async (url) => opened.push(url),
-    createServer: () => server,
+    createServer: () => {
+      server.created += 1;
+      return server;
+    },
     clock: { now: () => 1 },
     timers: fake.api
   };
@@ -181,6 +194,45 @@ test('start opens the picker through the server and notifies its url', async () 
   await s.handlers.start();
   assert.deepEqual(s.opened, ['http://127.0.0.1:5555/?token=t']);
   assert.match(notes(s)[0].body, /5555/);
+});
+
+test('the manifest declares the link command, global, and main registers it', () => {
+  const s = setup();
+  activate(s.orca, s.deps);
+  const declared = manifest.contributes.commands.find((c) => c.id === 'link');
+  assert.deepEqual(declared, { id: 'link', title: 'Basecamp: Link item to this worktree', context: 'global' });
+  assert.equal(typeof s.handlers.link, 'function');
+});
+
+test('link without an active worktree notifies, spawns nothing and starts no server', async () => {
+  const s = setup({ context: null });
+  activate(s.orca, s.deps);
+  await s.handlers.link();
+  assert.deepEqual(notes(s).map((n) => n.body), ['Open a worktree first']);
+  assert.equal(s.server.created, 0);
+  assert.deepEqual(s.server.sessions, []);
+  assert.equal(s.calls.length, 0);
+  assert.deepEqual(s.orcaCalls, []);
+  assert.deepEqual(s.opened, []);
+});
+
+test('link with an active worktree opens a link-mode tab on that worktree, bound to a new session', async () => {
+  const s = setup({ context: ACTIVE });
+  activate(s.orca, s.deps);
+  await s.handlers.link();
+  assert.deepEqual(s.server.sessions, [{ worktreeId: 'wt1', displayName: 'wt' }]);
+  const tab = s.orcaCalls.find((a) => a[0] === 'tab');
+  assert.deepEqual(tab, ['tab', 'create', '--worktree', 'id:wt1', '--url', 'http://127.0.0.1:5555/?token=t&mode=link&session=sess1']);
+  assert.deepEqual(s.opened, []);
+  assert.equal(s.calls.length, 0);
+});
+
+test('link reuses the picker server that start created', async () => {
+  const s = setup({ context: ACTIVE });
+  activate(s.orca, s.deps);
+  await s.handlers.start();
+  await s.handlers.link();
+  assert.equal(s.server.created, 1);
 });
 
 test('open-item and complete without a linked worktree notify and spawn nothing', async () => {
@@ -315,4 +367,11 @@ test('the picker server gets the sync config port and onConfigSaved restarts a s
   assert.equal(s.fake.live().length, 0);
   args.onConfigSaved();
   assert.equal(s.fake.live().filter((t) => t.kind === 'interval').length, 1);
+});
+
+test('link falls back to the worktree folder name when Orca gives no display name', async () => {
+  const s = setup({ context: { ...ACTIVE, displayName: undefined } });
+  activate(s.orca, s.deps);
+  await s.handlers.link();
+  assert.deepEqual(s.server.sessions, [{ worktreeId: 'wt1', displayName: 'w' }]);
 });

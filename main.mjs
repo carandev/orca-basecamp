@@ -1,3 +1,4 @@
+import { basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createBasecampSource } from './src/adapters/basecamp-cli.mjs';
 import { createOrcaAdapter } from './src/adapters/orca.mjs';
@@ -6,6 +7,7 @@ import { configFilePath, loadConfig } from './src/config.mjs';
 import { openPicker } from './src/inbound/open-picker.mjs';
 import { createPoller } from './src/inbound/poller.mjs';
 import { createUiServer } from './src/inbound/ui-server.mjs';
+import { createLinkExisting } from './src/usecases/link-existing.mjs';
 import { createCompleteLinked } from './src/usecases/complete-linked.mjs';
 import { diagnose } from './src/usecases/diagnose.mjs';
 import { createOnRemoved } from './src/usecases/on-removed.mjs';
@@ -30,11 +32,12 @@ const defaultDeps = {
   configFile: configFilePath(),
   clock: { now: () => Date.now() },
   timers: { setInterval, clearInterval, setTimeout, clearTimeout },
-  createServer: ({ source, orca, startFromItem, syncConfig, onConfigSaved }) =>
+  createServer: ({ source, orca, startFromItem, linkItem, syncConfig, onConfigSaved }) =>
     createUiServer({
       source,
       orca,
       startFromItem,
+      linkItem,
       syncConfig,
       onConfigSaved,
       html: () => fs.readFile(fileURLToPath(new URL('./src/inbound/ui/index.html', import.meta.url)))
@@ -74,6 +77,7 @@ export default function activate(orca, overrides = {}) {
   const syncConfig = createSyncConfig({ storage });
   const loadSyncConfig = () => syncConfig.get();
   const startFromItem = createStartFromItem({ source, orca: orcaPort, storage, notify, clock: deps.clock, loadSyncConfig });
+  const linkItem = createLinkExisting({ source, storage, notify, clock: deps.clock });
   const completeLinked = createCompleteLinked({ orca: orcaPort, storage, source, notify, loadSyncConfig, clock: deps.clock });
   const syncLinks = createSyncLinks({ storage, source, orca: orcaPort, notify, clock: deps.clock });
   const poller = createPoller({
@@ -116,17 +120,37 @@ export default function activate(orca, overrides = {}) {
 
   // One picker server per worker, started on demand; it stops itself after idling.
   let server = null;
+  const ensureServer = () =>
+    (server ??= deps.createServer({
+      source,
+      orca: orcaPort,
+      startFromItem,
+      linkItem,
+      syncConfig,
+      onConfigSaved: () => poller.ensureStarted()
+    }));
   orca.commands.register(
     'start',
     guard('start', async () => {
-      server ??= deps.createServer({
-        source,
+      await openPicker({ server: ensureServer(), orca: orcaPort, openExternal: deps.openExternal, notify, log });
+    })
+  );
+
+  // Links the ACTIVE worktree: the picker opens in link mode bound to a server-side session, so the page never names the target.
+  orca.commands.register(
+    'link',
+    guard('link', async () => {
+      const active = await orcaPort.resolveActiveWorktree();
+      if (!active) return void (await notify('Basecamp: Link item to this worktree', 'Open a worktree first'));
+      const displayName = active.displayName || basename(active.worktreePath);
+      await openPicker({
+        server: ensureServer(),
         orca: orcaPort,
-        startFromItem,
-        syncConfig,
-        onConfigSaved: () => poller.ensureStarted()
+        openExternal: deps.openExternal,
+        notify,
+        log,
+        link: { worktreeId: active.worktreeId, displayName }
       });
-      await openPicker({ server, orca: orcaPort, openExternal: deps.openExternal, notify, log });
     })
   );
 

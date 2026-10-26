@@ -100,7 +100,7 @@ test('resolveActiveWorktree is null and spawns nothing when no worktree is focus
 test('resolveActiveWorktree uses the first terminal when there is one', async () => {
   const cli = fakeCli({ 'terminal show': { terminal: { worktreeId: 'wt-9', worktreePath: '/w/9' } } });
   const active = await adapter(cli, async () => ({ branch: 'b', displayName: 'd', terminals: [{ id: 't1' }, { id: 't2' }] })).resolveActiveWorktree();
-  assert.deepEqual(active, { worktreeId: 'wt-9', worktreePath: '/w/9' });
+  assert.deepEqual(active, { worktreeId: 'wt-9', worktreePath: '/w/9', displayName: 'd' });
   assert.deepEqual(cli.calls, [['terminal', 'show', '--terminal', 't1']]);
 });
 
@@ -111,7 +111,7 @@ test('resolveActiveWorktree falls back to worktree list by display name and bran
   ];
   const cli = fakeCli({ 'worktree list': { worktrees } });
   const ctx = { branch: 'bc-2', displayName: 'bc-2', terminals: [] };
-  assert.deepEqual(await adapter(cli, async () => ctx).resolveActiveWorktree(), { worktreeId: 'y', worktreePath: '/w/2' });
+  assert.deepEqual(await adapter(cli, async () => ctx).resolveActiveWorktree(), { worktreeId: 'y', worktreePath: '/w/2', displayName: 'bc-2' });
 });
 
 test('resolveActiveWorktree throws on no match, an ambiguous match or a missing id', async () => {

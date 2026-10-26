@@ -18,6 +18,7 @@ Requires Orca >= 1.4.0 and Node 22 or newer for development.
 |---------|--------------|
 | Basecamp: Diagnose | Checks that the CLI runs and is logged in. Shows a summary, never secrets |
 | Basecamp: Start from item | Opens a local picker for to-dos and cards. Start creates the worktree `bc-<id>-<slug>` with the item as the agent prompt, and links them |
+| Basecamp: Link item to this worktree | Opens the picker in link mode for the active worktree. Choosing an item links it to that worktree; nothing is created. See [Link an existing worktree](#link-an-existing-worktree) |
 | Basecamp: Open linked item | Opens the item linked to the active worktree in an Orca tab (OS browser as fallback) |
 | Basecamp: Complete linked item | Completes the item linked to the active worktree and keeps the link, so later changes still sync. If it fails, the link is kept too |
 | Basecamp: Sync now | Runs one sync pass right away and waits for it (up to 20 s) |
@@ -27,6 +28,16 @@ The picker shows only items assigned to you by default. Uncheck **Only mine** to
 Open and Complete are always available. With no linked item they only notify "No linked item".
 
 When a linked worktree is removed, its item is completed once (10 s limit, no retries) and the link is deleted. If that fails, the notification carries the title and URL so you can finish by hand. This happens whether sync is on or off.
+
+### Link an existing worktree
+
+Use **Basecamp: Link item to this worktree** when the worktree already exists. It needs an active worktree (otherwise it only notifies "Open a worktree first"). The picker opens with "Link to: <worktree>", without the repository and agent selectors, and each item has a **Link** button. The To-dos/Cards tabs and **Only mine** work as usual.
+
+- No new worktree is created and no agent is launched.
+- The Orca status and comment of the worktree are not changed.
+- If the worktree already had a link, it is replaced, and a notification names the item that was replaced.
+- The link is written without a sync baseline, so with sync on, the first sync pass only records both sides and changes nothing. Open, Complete, sync and worktree removal then work as for a worktree created by Start.
+- The target worktree is fixed by the plugin when the command runs (a single-use session that expires after 15 minutes); the page cannot choose another one. Run the command again for a new session.
 
 ## Status sync
 

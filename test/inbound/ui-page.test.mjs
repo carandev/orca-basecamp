@@ -24,3 +24,28 @@ test('the Sync grid lists several columns per status with a destination label, r
   assert.match(page, /'add column'/);
   assert.match(page, /title = 'Remove column'/);
 });
+
+test('link mode is chosen by mode=link and a session from the URL, and the page never names a worktree', () => {
+  assert.match(page, /\.get\('mode'\) === 'link'/);
+  assert.match(page, /\.get\('session'\)/);
+  assert.doesNotMatch(page, /worktreeId/);
+});
+
+test('link mode reads the display name from /api/link-session and shows it with textContent', () => {
+  assert.match(page, /'\/api\/link-session\?session=' \+ encodeURIComponent\(session\)/);
+  assert.match(page, /textContent = 'Link to: ' \+ /);
+});
+
+test('link mode hides the repository and agent selectors and the Sync tab, keeping Only mine and the tabs', () => {
+  assert.match(page, /id="repo-wrap"/);
+  assert.match(page, /id="agent-wrap"/);
+  assert.match(page, /\$\('repo-wrap'\)\.hidden = true/);
+  assert.match(page, /\$\('agent-wrap'\)\.hidden = true/);
+  assert.match(page, /\$\('tab-sync'\)\.hidden = true/);
+  assert.ok(page.indexOf('id="mine"') > page.indexOf('id="agent-wrap"'));
+});
+
+test('link mode replaces Start with a Link button that posts only ids and the session to /api/link', () => {
+  assert.match(page, /button\.textContent = linkMode \? 'Link' : 'Start'/);
+  assert.match(page, /api\('POST', '\/api\/link', \{ type: item\.type, id: item\.id, projectId: item\.projectId, session: session \}\)/);
+});

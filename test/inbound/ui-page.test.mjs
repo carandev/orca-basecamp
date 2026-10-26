@@ -45,8 +45,20 @@ test('link mode hides the repository and agent selectors and the Sync tab, keepi
 });
 
 test('link mode replaces Start with a Link button that posts only ids and the session to /api/link', () => {
-  assert.match(page, /button\.textContent = linkMode \? 'Link' : 'Start'/);
+  assert.match(page, /action\.textContent = linkMode \? 'Link' : 'Start'/);
   assert.match(page, /api\('POST', '\/api\/link', \{ type: item\.type, id: item\.id, projectId: item\.projectId, session: session \}\)/);
+});
+
+test('already-linked items show a "Linked to worktree" badge instead of a button', () => {
+  assert.match(page, /'linked-badge'/);
+  assert.match(page, /'Linked to worktree'/);
+  assert.match(page, /isLinked/);
+});
+
+test('load fetches /api/linked-items in parallel with /api/items and passes the result to render', () => {
+  assert.match(page, /\/api\/linked-items/);
+  assert.match(page, /Promise\.all/);
+  assert.match(page, /li\.ok.*li\.items|li\.items.*li\.ok/);
 });
 
 test('the project select is always visible, defaults to "All projects", and reloads the list', () => {

@@ -8,6 +8,7 @@ import { openPicker } from './src/inbound/open-picker.mjs';
 import { createPoller } from './src/inbound/poller.mjs';
 import { createUiServer } from './src/inbound/ui-server.mjs';
 import { createLinkExisting } from './src/usecases/link-existing.mjs';
+import { listLinkedItems } from './src/usecases/list-linked-items.mjs';
 import { createCompleteLinked } from './src/usecases/complete-linked.mjs';
 import { diagnose } from './src/usecases/diagnose.mjs';
 import { createOnRemoved } from './src/usecases/on-removed.mjs';
@@ -32,12 +33,13 @@ const defaultDeps = {
   configFile: configFilePath(),
   clock: { now: () => Date.now() },
   timers: { setInterval, clearInterval, setTimeout, clearTimeout },
-  createServer: ({ source, orca, startFromItem, linkItem, syncConfig, onConfigSaved }) =>
+  createServer: ({ source, orca, startFromItem, linkItem, linkedItems, syncConfig, onConfigSaved }) =>
     createUiServer({
       source,
       orca,
       startFromItem,
       linkItem,
+      linkedItems,
       syncConfig,
       onConfigSaved,
       html: () => fs.readFile(fileURLToPath(new URL('./src/inbound/ui/index.html', import.meta.url)))
@@ -120,12 +122,14 @@ export default function activate(orca, overrides = {}) {
 
   // One picker server per worker, started on demand; it stops itself after idling.
   let server = null;
+  const linkedItems = () => listLinkedItems({ storage });
   const ensureServer = () =>
     (server ??= deps.createServer({
       source,
       orca: orcaPort,
       startFromItem,
       linkItem,
+      linkedItems,
       syncConfig,
       onConfigSaved: () => poller.ensureStarted()
     }));

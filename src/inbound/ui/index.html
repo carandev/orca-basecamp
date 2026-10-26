@@ -22,6 +22,7 @@
   .banner.error { border-left-color: var(--danger); } .banner.ok { border-left-color: var(--ok); } .banner.info { border-left-color: var(--accent); }
   .item { display: flex; gap: 8px; align-items: center; justify-content: space-between; border: 1px solid var(--border); background: var(--panel); border-radius: 6px; padding: 8px; margin-top: 6px; }
   .item-actions { display: flex; gap: 6px; align-items: center; flex: 0 0 auto; }
+  .linked-badge { font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; white-space: nowrap; }
   .name-input { width: 200px; font-size: 13px; font-family: monospace; }
   .item span.meta { color: var(--muted); font-size: 12px; display: block; }
   .check { flex-direction: row; align-items: center; gap: 8px; color: var(--text); font-size: 14px; flex: 0 0 auto; }
@@ -156,7 +157,7 @@
     }, function (e) { button.disabled = false; say('error', e.message); });
   }
 
-  function render(items) {
+  function render(items, linked) {
     var list = $('list');
     list.textContent = '';
     if (items.length === 0) list.textContent = 'Nothing to show.';
@@ -167,14 +168,22 @@
       meta.className = 'meta';
       meta.textContent = item.projectName;
       title.appendChild(meta);
-      var button = document.createElement('button');
-      button.type = 'button';
-      button.textContent = linkMode ? 'Link' : 'Start';
-      button.addEventListener('click', function () { (linkMode ? link : start)(item, button); });
+      var isLinked = linked && linked[item.type + ':' + item.id];
+      var action;
+      if (isLinked) {
+        action = document.createElement('span');
+        action.className = 'linked-badge';
+        action.textContent = 'Linked to worktree';
+      } else {
+        action = document.createElement('button');
+        action.type = 'button';
+        action.textContent = linkMode ? 'Link' : 'Start';
+        action.addEventListener('click', function () { (linkMode ? link : start)(item, action); });
+      }
       var row = document.createElement('div');
       row.className = 'item';
       row.appendChild(title);
-      row.appendChild(button);
+      row.appendChild(action);
       list.appendChild(row);
     });
   }
@@ -336,10 +345,19 @@
     var path = '/api/items?kind=' + kind + '&mine=' + ($('mine').checked ? '1' : '0');
     if ($('project').value) path += '&projectId=' + encodeURIComponent($('project').value);
     else if (kind === 'card' && !$('mine').checked) return say('info', 'Choose a project.');
-    api('GET', path).then(function (j) {
+    Promise.all([
+      api('GET', path),
+      api('GET', '/api/linked-items')
+    ]).then(function (results) {
+      var j = results[0];
+      var li = results[1];
       if (!j.ok) return say('error', problem(j));
       if (j.notice) say('info', j.notice);
-      render(j.items);
+      var linked = {};
+      if (li.ok && Array.isArray(li.items)) {
+        li.items.forEach(function (x) { linked[x.type + ':' + x.id] = true; });
+      }
+      render(j.items, linked);
     }, function (e) { say('error', 'Could not reach the picker server: ' + e.message); });
   }
 

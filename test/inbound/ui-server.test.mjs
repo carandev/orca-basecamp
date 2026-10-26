@@ -634,3 +634,38 @@ test('projectId is optional for to-dos and my cards, passed through when present
   }
   assert.equal(s.sourceCalls.length, before);
 });
+
+// ---- /api/linked-items
+
+test('GET /api/linked-items returns the items from the linkedItems port', async () => {
+  const linked = [{ type: 'todo', id: 1 }, { type: 'card', id: 42 }];
+  const { port } = await start({ server: { linkedItems: async () => linked } });
+  const r = await get(port, '/api/linked-items');
+  assert.equal(r.status, 200);
+  assert.deepEqual(json(r), { ok: true, items: linked });
+});
+
+test('GET /api/linked-items returns an empty array when no linkedItems port is provided', async () => {
+  const { port } = await start();
+  const r = await get(port, '/api/linked-items');
+  assert.equal(r.status, 200);
+  assert.deepEqual(json(r), { ok: true, items: [] });
+});
+
+test('GET /api/linked-items is 403 without a valid token', async () => {
+  const { port } = await start({ server: { linkedItems: async () => [] } });
+  assert.equal((await get(port, '/api/linked-items', {})).status, 403);
+  assert.equal((await get(port, '/api/linked-items', { 'X-Token': 'nope' })).status, 403);
+});
+
+test('GET /api/linked-items is 403 with a foreign Origin', async () => {
+  const { port } = await start({ server: { linkedItems: async () => [] } });
+  assert.equal((await get(port, '/api/linked-items', { 'X-Token': TOKEN, Origin: 'http://evil.example' })).status, 403);
+});
+
+test('GET /api/linked-items returns 502 when the port throws', async () => {
+  const { port } = await start({ server: { linkedItems: async () => { throw new Error('storage down'); } } });
+  const r = await get(port, '/api/linked-items');
+  assert.equal(r.status, 502);
+  assert.equal(json(r).ok, false);
+});

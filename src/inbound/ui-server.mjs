@@ -47,6 +47,7 @@ export function createUiServer({
   orca,
   startFromItem,
   linkItem,
+  linkedItems,
   clock = { now: () => Date.now() },
   syncConfig,
   onConfigSaved = () => {},
@@ -273,7 +274,8 @@ export function createUiServer({
       '/api/sync-config': ['GET', 'POST'],
       '/api/start': 'POST',
       '/api/link': 'POST',
-      '/api/link-session': 'GET'
+      '/api/link-session': 'GET',
+      '/api/linked-items': 'GET'
     }[url.pathname];
     if (!allowed) return fail(res, 404, 'Not found');
     if (![allowed].flat().includes(req.method)) return fail(res, 405, 'Method not allowed');
@@ -284,6 +286,14 @@ export function createUiServer({
     if (url.pathname === '/api/start') return start_(req, res, origins);
     if (url.pathname === '/api/link') return link_(req, res, origins);
     if (url.pathname === '/api/link-session') return linkSession_(res, url);
+    if (url.pathname === '/api/linked-items') {
+      try {
+        const items_ = typeof linkedItems === 'function' ? await linkedItems() : [];
+        return send(res, 200, { ok: true, items: items_ });
+      } catch (error) {
+        return portFailure(res, error);
+      }
+    }
     if (url.pathname === '/api/items') return items(res, url);
     if (url.pathname === '/api/columns') return columns(res, url);
     if (url.pathname === '/api/sync-config') {
